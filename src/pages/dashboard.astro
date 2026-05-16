@@ -1,0 +1,17 @@
+---
+import '../styles/global.css';
+import DashboardApp from '../components/DashboardApp.jsx';
+---
+
+<html lang="es">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<meta name="viewport" content="width=device-width" />
+		<title>Panel de Control - Maxi Emprendedores</title>
+	</head>
+	<body className= "bg-slate-50 antialiased overflow-hidden">
+		{/* client:only="react" es vital aquí porque usamos la sesión del navegador */}
+		<DashboardApp client:only="react" />
+	</body>
+</html>
