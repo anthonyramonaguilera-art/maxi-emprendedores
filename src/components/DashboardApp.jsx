@@ -1,41 +1,52 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { motion } from 'framer-motion';
-import ModuloGastos from './ModuloGastos';
-import ModuloFiados from './ModuloFiados';
-import { LogOut, Package, TrendingUp, BookOpen, User, Beaker, ShoppingCart, Activity, ChefHat, Settings, Store, Receipt, BookMarked } from 'lucide-react';
-import InventarioMermas from './InventarioMermas';
-import MisRecetas from './MisRecetas';
-import ModuloProduccion from './ModuloProduccion';
-import ModuloVentas from './ModuloVentas';
-import ModuloResumen from './ModuloResumen';
-import CentroPreparacion from './CentroPreparacion';
-import ModuloConfiguracion from './ModuloConfiguracion';
+import { 
+  Archive, 
+  Soup, 
+  Store, 
+  Layers, 
+  LogOut, 
+  Coins,
+  Sparkles,
+  Loader2
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
-export default function DashboardApp() {
-  const [usuario, setUsuario] = useState(null);
-  const [perfilNegocio, setPerfilNegocio] = useState(null);
+// Nota: Crearemos estos componentes en los siguientes pasos
+import MiAlacena from './MiAlacena';
+import LaCocina from './LaCocina';
+import MiNevera from './MiNevera';
+import MisCuentas from './MisCuentas';
+
+export default function DashboardApp({ usuario }) {
+  const [tabActiva, setTabActiva] = useState('nevera'); // Iniciamos directo en la nevera/mostrador
+  const [tasaBcv, setTasaBcv] = useState(null);
+  const [perfil, setPerfil] = useState(null);
   const [cargando, setCargando] = useState(true);
-  const [vistaActiva, setVistaActiva] = useState('resumen');
 
+  // Cargar datos iniciales de la tasa y el negocio
   useEffect(() => {
-    const verificarSesion = async () => {
-      const { data: { user }, error } = await supabase.auth.getUser();
-      
-      if (user && !error) {
-        setUsuario(user);
-        
-        // Cargar el perfil del negocio para el Logo y el Nombre
-        const { data } = await supabase.from('perfiles').select('*').eq('user_id', user.id).single();
-        if (data) setPerfilNegocio(data);
-      } else {
-        window.location.href = '/login';
+    const inicializarApp = async () => {
+      try {
+        const resTasa = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
+        const dataTasa = await resTasa.json();
+        setTasaBcv(dataTasa.promedio);
+      } catch (e) { 
+        setTasaBcv(51.20); // Tasa de respaldo por si falla la API
+      }
+
+      if (usuario?.id) {
+        const { data } = await supabase
+          .from('perfiles')
+          .select('*')
+          .eq('user_id', usuario.id)
+          .single();
+        if (data) setPerfil(data);
       }
       setCargando(false);
     };
-
-    verificarSesion();
-  }, []);
+    inicializarApp();
+  }, [usuario]);
 
   const cerrarSesion = async () => {
     await supabase.auth.signOut();
@@ -43,94 +54,130 @@ export default function DashboardApp() {
   };
 
   if (cargando) {
-    return <div className="min-h-screen flex items-center justify-center bg-slate-50"><p className="text-xl font-bold text-slate-500 animate-pulse">Cargando tu negocio...</p></div>;
+    return (
+      <div className="fixed inset-0 bg-slate-50 flex flex-col justify-center items-center">
+        <Loader2 className="w-12 h-12 animate-spin text-blue-600 mb-2" />
+        <p className="text-slate-500 font-bold font-sans">Abriendo Maxi Emprendedores...</p>
+      </div>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex font-sans">
-      
-      <aside className="w-20 md:w-64 bg-white border-r border-slate-200 flex flex-col justify-between p-4 shadow-sm z-10">
-        <div>
-          {/* LOGO DINÁMICO */}
-          <div className="flex items-center justify-center md:justify-start gap-3 mb-10 mt-2 overflow-hidden">
-            {perfilNegocio?.logo_url ? (
-              <img src={perfilNegocio.logo_url} alt="Logo" className="w-10 h-10 md:w-12 md:h-12 rounded-lg object-cover drop-shadow-sm shrink-0" />
-            ) : (
-              <div className="w-10 h-10 md:w-12 md:h-12 bg-blue-600 rounded-lg flex items-center justify-center text-white shrink-0 shadow-md">
-                <Store className="w-6 h-6"/>
-              </div>
-            )}
-            <span className="hidden md:block font-black text-lg text-slate-800 tracking-tight truncate">
-              {perfilNegocio?.nombre_negocio || 'MaxiPOS'}
-            </span>
+    // Contenedor global optimizado para móviles (se centra en pantallas de PC como un teléfono simulado)
+    <div className="min-h-screen bg-slate-100 font-sans flex justify-center">
+      <div className="w-full max-w-md bg-slate-50 min-h-screen flex flex-col shadow-2xl relative pb-24 overflow-x-hidden">
+        
+        {/* HEADER SUPERIOR (ZONA DE CONTROL) */}
+        <header className="bg-white border-b border-slate-100 px-4 py-3 flex justify-between items-center sticky top-0 z-40 shadow-sm">
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 bg-gradient-to-tr from-blue-500 to-amber-400 rounded-full flex items-center justify-center font-black text-white shadow-md text-sm">
+              M
+            </div>
+            <div>
+              <h1 className="text-sm font-black text-slate-800 leading-none">
+                {perfil?.nombre_negocio || 'Mi Dulcería'}
+              </h1>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                Maxi Panel v2
+              </span>
+            </div>
           </div>
 
-          <nav className="space-y-4">
-            <button onClick={() => setVistaActiva('resumen')} className={`w-full flex items-center gap-3 p-3 rounded-xl font-bold transition-all ${vistaActiva === 'resumen' ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}>
-              <TrendingUp className="w-5 h-5" /> <span className="hidden md:block">Mi Resumen</span>
+          <div className="flex items-center gap-2">
+            {/* Indicador de Tasa BCV */}
+            <div className="bg-amber-50 border border-amber-200/60 px-2.5 py-1 rounded-xl text-right">
+              <p className="text-[9px] font-bold text-amber-600 uppercase leading-none">Tasa BCV</p>
+              <p className="text-xs font-black text-amber-700 mt-0.5">{tasaBcv?.toFixed(2)} Bs</p>
+            </div>
+            
+            {/* Botón de Salir Discreto */}
+            <button 
+              onClick={cerrarSesion} 
+              className="p-2 text-slate-400 hover:text-red-500 rounded-xl hover:bg-red-50 transition-colors"
+              title="Salir del sistema"
+            >
+              <LogOut className="w-5 h-5" />
             </button>
-            <button onClick={() => setVistaActiva('inventario')} className={`w-full flex items-center gap-3 p-3 rounded-xl font-bold transition-all ${vistaActiva === 'inventario' ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}>
-              <Package className="w-5 h-5" /> <span className="hidden md:block">Inventario & Mermas</span>
-            </button>
-            <button onClick={() => setVistaActiva('preparacion')} className={`w-full flex items-center gap-3 p-3 rounded-xl font-bold transition-all ${vistaActiva === 'preparacion' ? 'bg-amber-50 text-amber-700' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}>
-              <ChefHat className="w-5 h-5" /> <span className="hidden md:block">Preparaciones</span>
-            </button>
-            <button onClick={() => setVistaActiva('recetas')} className={`w-full flex items-center gap-3 p-3 rounded-xl font-bold transition-all ${vistaActiva === 'recetas' ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}>
-              <BookOpen className="w-5 h-5" /> <span className="hidden md:block">Mis Recetas</span>
-            </button>
-            <button onClick={() => setVistaActiva('gastos')} className={`w-full flex items-center gap-3 p-3 rounded-xl font-bold transition-all ${vistaActiva === 'gastos' ? 'bg-red-50 text-red-600' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}>
-          <Receipt className="w-5 h-5" /> <span className="hidden md:block">Gastos Operativos</span>
-        </button>
-            <button onClick={() => setVistaActiva('produccion')} className={`w-full flex items-center gap-3 p-3 rounded-xl font-bold transition-all ${vistaActiva === 'produccion' ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}>
-              <Beaker className="w-5 h-5" /> <span className="hidden md:block">Producción</span>
-            </button>
-            <button onClick={() => setVistaActiva('ventas')} className={`w-full flex items-center gap-3 p-3 rounded-xl font-bold transition-all ${vistaActiva === 'ventas' ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}>
-              <ShoppingCart className="w-5 h-5" /> <span className="hidden md:block">Punto de Venta</span>
-            </button>
-            <button onClick={() => setVistaActiva('fiados')} className={`w-full flex items-center gap-3 p-3 rounded-xl font-bold transition-all ${vistaActiva === 'fiados' ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}>
-          <BookMarked className="w-5 h-5" /> <span className="hidden md:block">Cuaderno de Fiados</span>
-        </button>
-          </nav>
-        </div>
-
-        <div>
-          <button onClick={() => setVistaActiva('configuracion')} className={`w-full flex items-center gap-3 p-3 mb-2 rounded-xl font-bold transition-all ${vistaActiva === 'configuracion' ? 'bg-slate-200 text-slate-800' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'}`}>
-            <Settings className="w-5 h-5" /> <span className="hidden md:block">Configuración</span>
-          </button>
-          <button onClick={cerrarSesion} className="w-full flex items-center gap-3 p-3 rounded-xl text-red-500 hover:bg-red-50 font-medium transition-all">
-            <LogOut className="w-5 h-5" /> <span className="hidden md:block">Salir</span>
-          </button>
-        </div>
-      </aside>
-
-      <main className="flex-1 p-4 md:p-8 overflow-y-auto">
-        <header className="mb-10 flex justify-between items-center">
-          <div>
-            <motion.h1 initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="text-2xl md:text-3xl font-black text-slate-800">
-              ¡Hola, {perfilNegocio?.nombre_negocio || 'Emprendedor'}! 👋
-            </motion.h1>
-            <p className="text-slate-500 mt-1 text-sm md:text-base">Conectado como: {usuario?.email}</p>
-          </div>
-          <div className="bg-white p-3 rounded-full shadow-sm border border-slate-100 hidden md:block">
-            {perfilNegocio?.logo_url ? (
-              <img src={perfilNegocio.logo_url} alt="User" className="w-5 h-5 rounded-full object-cover" />
-            ) : (
-              <User className="w-5 h-5 text-slate-400" />
-            )}
           </div>
         </header>
 
-        {/* --- RENDERIZADO DE VISTAS --- */}
-        {vistaActiva === 'resumen' && <ModuloResumen usuario={usuario} />}
-        {vistaActiva === 'inventario' && <InventarioMermas usuario={usuario} />}
-        {vistaActiva === 'preparacion' && <CentroPreparacion usuario={usuario} />}
-        {vistaActiva === 'recetas' && <MisRecetas usuario={usuario} />}
-        {vistaActiva === 'produccion' && <ModuloProduccion usuario={usuario} />}
-       {vistaActiva === 'ventas' && <ModuloVentas usuario={usuario} />}
-        {vistaActiva === 'configuracion' && <ModuloConfiguracion usuario={usuario} />}
-        {vistaActiva === 'gastos' && <ModuloGastos usuario={usuario} />}
-        {vistaActiva === 'fiados' && <ModuloFiados usuario={usuario} />}
-      </main>
+        {/* CONTENEDOR DE PANTALLAS DINÁMICAS (ZONA DE JUEGO) */}
+        <main className="flex-1 p-4 overflow-y-auto">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={tabActiva}
+              initial={{ opacity: 0, x: 15 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -15 }}
+              transition={{ duration: 0.15 }}
+              className="h-full"
+            >
+              {tabActiva === 'alacena' && <MiAlacena usuario={usuario} tasaBcv={tasaBcv} />}
+              {tabActiva === 'cocina' && <LaCocina usuario={usuario} tasaBcv={tasaBcv} />}
+              {tabActiva === 'nevera' && <MiNevera usuario={usuario} tasaBcv={tasaBcv} />}
+              {tabActiva === 'cuentas' && <MisCuentas usuario={usuario} tasaBcv={tasaBcv} />}
+            </motion.div>
+          </AnimatePresence>
+        </main>
+
+        {/* 📋 BARRA DE NAVEGACIÓN INFERIOR (ZONA DEL PULGAR) */}
+        <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-white border-t border-slate-100 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] px-2 py-2 flex justify-around items-center z-50 rounded-t-3xl">
+          
+          {/* Pestaña: Alacena */}
+          <button
+            onClick={() => setTabActiva('alacena')}
+            className={`flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all ${
+              tabActiva === 'alacena' 
+                ? 'bg-emerald-50 text-emerald-600 scale-105 font-black' 
+                : 'text-slate-400 font-medium'
+            }`}
+          >
+            <Archive className="w-5 h-5" />
+            <span className="text-[10px] mt-1 tracking-tight">Alacena</span>
+          </button>
+
+          {/* Pestaña: La Cocina */}
+          <button
+            onClick={() => setTabActiva('cocina')}
+            className={`flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all ${
+              tabActiva === 'cocina' 
+                ? 'bg-amber-50 text-amber-600 scale-105 font-black' 
+                : 'text-slate-400 font-medium'
+            }`}
+          >
+            <Soup className="w-5 h-5" />
+            <span className="text-[10px] mt-1 tracking-tight">La Cocina</span>
+          </button>
+
+          {/* Pestaña: Mi Nevera */}
+          <button
+            onClick={() => setTabActiva('nevera')}
+            className={`flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all ${
+              tabActiva === 'nevera' 
+                ? 'bg-blue-50 text-blue-600 scale-105 font-black' 
+                : 'text-slate-400 font-medium'
+            }`}
+          >
+            <Store className="w-5 h-5" />
+            <span className="text-[10px] mt-1 tracking-tight">Mi Nevera</span>
+          </button>
+
+          {/* Pestaña: Mis Cuentas */}
+          <button
+            onClick={() => setTabActiva('cuentas')}
+            className={`flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all ${
+              tabActiva === 'cuentas' 
+                ? 'bg-indigo-50 text-indigo-600 scale-105 font-black' 
+                : 'text-slate-400 font-medium'
+            }`}
+          >
+            <Coins className="w-5 h-5" />
+            <span className="text-[10px] mt-1 tracking-tight">Finanzas</span>
+          </button>
+
+        </nav>
+
+      </div>
     </div>
   );
 }

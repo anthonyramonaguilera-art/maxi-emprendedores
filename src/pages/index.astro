@@ -1,20 +1,9 @@
 ---
-// Importamos los estilos globales de Tailwind (Requisito indispensable)
-import '../styles/global.css';
-
-// Importamos a nuestro componente interactivo de React
-import OnboardingMascota from '../components/OnboardingMascota.jsx';
+import Layout from '../layouts/Layout.astro';
+import MesaTrabajoLibre from '../components/MesaTrabajoLibre.jsx';
+import '../styles/global.css'; /* <-- ESTA ES LA LÍNEA MÁGICA */
 ---
 
-<html lang="es">
-	<head>
-		<meta charset="utf-8" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<meta name="viewport" content="width=device-width" />
-		<title>Maxi Emprendedores - Control de Postres</title>
-	</head>
-	<body className="bg-slate-50 antialiased">
-		{/* client:load le dice a Astro que active el JavaScript de React apenas cargue la página */}
-		<OnboardingMascota client:load />
-	</body>
-</html>
+<Layout title="Maxi Emprendedores - Calcula tus costos gratis">
+  <MesaTrabajoLibre client:load />
+</Layout>

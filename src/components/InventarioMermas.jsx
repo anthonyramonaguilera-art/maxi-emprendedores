@@ -1,180 +1,182 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Plus, Package, Save, RefreshCw, DollarSign, Banknote, Loader2 } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { 
+  Archive, 
+  Soup, 
+  Store, 
+  Layers, 
+  LogOut, 
+  Coins,
+  Sparkles,
+  Loader2
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
-export default function InventarioMermas({ usuario }) {
-  const [materiales, setMateriales] = useState([]);
-  const [cargando, setCargando] = useState(true);
-  const [procesando, setProcesando] = useState(false);
-  
-  // Tasa BCV
+// Nota: Crearemos estos componentes en los siguientes pasos
+import MiAlacena from './MiAlacena';
+import LaCocina from './LaCocina';
+import MiNevera from './MiNevera';
+import MisCuentas from './MisCuentas';
+
+export default function DashboardApp({ usuario }) {
+  const [tabActiva, setTabActiva] = useState('nevera'); // Iniciamos directo en la nevera/mostrador
   const [tasaBcv, setTasaBcv] = useState(null);
-  const [cargandoTasa, setCargandoTasa] = useState(true);
+  const [perfil, setPerfil] = useState(null);
+  const [cargando, setCargando] = useState(true);
 
-  // Estados del formulario bimonetario
-  const [nombre, setNombre] = useState('');
-  const [cantidad, setCantidad] = useState('');
-  const [unidad, setUnidad] = useState('Litros');
-  const [costoUsd, setCostoUsd] = useState('');
-  const [costoBs, setCostoBs] = useState('');
-
+  // Cargar datos iniciales de la tasa y el negocio
   useEffect(() => {
-    const obtenerTasaBCV = async () => {
+    const inicializarApp = async () => {
       try {
-        const respuesta = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
-        const data = await respuesta.json();
-        setTasaBcv(data.promedio);
-      } catch (error) {
-        setTasaBcv(500.00); // Respaldo
-      } finally {
-        setCargandoTasa(false);
+        const resTasa = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
+        const dataTasa = await resTasa.json();
+        setTasaBcv(dataTasa.promedio);
+      } catch (e) { 
+        setTasaBcv(51.20); // Tasa de respaldo por si falla la API
       }
-    };
-    obtenerTasaBCV();
 
-    if (usuario?.id) cargarMateriales();
+      if (usuario?.id) {
+        const { data } = await supabase
+          .from('perfiles')
+          .select('*')
+          .eq('user_id', usuario.id)
+          .single();
+        if (data) setPerfil(data);
+      }
+      setCargando(false);
+    };
+    inicializarApp();
   }, [usuario]);
 
-  const cargarMateriales = async () => {
-    setCargando(true);
-    const { data, error } = await supabase.from('materiales').select('*').eq('user_id', usuario.id).order('created_at', { ascending: false });
-    if (!error && data) setMateriales(data);
-    setCargando(false);
+  const cerrarSesion = async () => {
+    await supabase.auth.signOut();
+    window.location.href = '/login';
   };
 
-  // Manejadores de Moneda Dual
-  const handleCostoUsd = (val) => {
-    setCostoUsd(val);
-    setCostoBs(val && tasaBcv ? (parseFloat(val) * tasaBcv).toFixed(2) : '');
-  };
-  const handleCostoBs = (val) => {
-    setCostoBs(val);
-    setCostoUsd(val && tasaBcv ? (parseFloat(val) / tasaBcv).toFixed(2) : '');
-  };
-
-  const guardarMaterial = async (e) => {
-    e.preventDefault();
-    if (!usuario?.id) return alert("Cargando usuario...");
-
-    setProcesando(true);
-    const costoTotalDolares = parseFloat(costoUsd);
-    const costoPromedio = costoTotalDolares / parseFloat(cantidad);
-
-    const { error } = await supabase.from('materiales').insert([{
-        user_id: usuario.id,
-        nombre: nombre,
-        cantidad_actual: parseFloat(cantidad),
-        unidad_medida: unidad,
-        costo_promedio_usd: costoPromedio
-    }]);
-
-    if (!error) {
-      setNombre(''); setCantidad(''); setCostoUsd(''); setCostoBs('');
-      cargarMateriales(); 
-    } else {
-      alert("Error al guardar: " + error.message);
-    }
-    setProcesando(false);
-  };
+  if (cargando) {
+    return (
+      <div className="fixed inset-0 bg-slate-50 flex flex-col justify-center items-center">
+        <Loader2 className="w-12 h-12 animate-spin text-blue-600 mb-2" />
+        <p className="text-slate-500 font-bold font-sans">Abriendo Maxi Emprendedores...</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <header className="flex justify-between items-end">
-        <div>
-          <h2 className="text-2xl font-black text-slate-800">Inventario y Mermas</h2>
-          <p className="text-slate-500">Registra tus compras. Todo se calcula en ambas monedas al instante.</p>
-        </div>
-        <div className="bg-white px-4 py-2 rounded-xl shadow-sm border border-slate-100 flex items-center gap-2">
-          {cargandoTasa ? <Loader2 className="w-4 h-4 animate-spin text-blue-600"/> : <span className="text-sm font-bold text-slate-700">🇻🇪 BCV: {tasaBcv} Bs</span>}
-        </div>
-      </header>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* FORMULARIO BIMONETARIO */}
-        <div className="lg:col-span-1 bg-white p-6 rounded-3xl shadow-sm border border-slate-100 h-fit">
-          <h3 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2"><Plus className="w-5 h-5 text-blue-600"/> Nueva Compra</h3>
-          
-          <form onSubmit={guardarMaterial} className="space-y-4">
+    // Contenedor global optimizado para móviles (se centra en pantallas de PC como un teléfono simulado)
+    <div className="min-h-screen bg-slate-100 font-sans flex justify-center">
+      <div className="w-full max-w-md bg-slate-50 min-h-screen flex flex-col shadow-2xl relative pb-24 overflow-x-hidden">
+        
+        {/* HEADER SUPERIOR (ZONA DE CONTROL) */}
+        <header className="bg-white border-b border-slate-100 px-4 py-3 flex justify-between items-center sticky top-0 z-40 shadow-sm">
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 bg-gradient-to-tr from-blue-500 to-amber-400 rounded-full flex items-center justify-center font-black text-white shadow-md text-sm">
+              M
+            </div>
             <div>
-              <label className="block text-sm font-medium text-slate-600 mb-1">Material (Ej: Leche, Azúcar)</label>
-              <input type="text" required value={nombre} onChange={(e) => setNombre(e.target.value)} className="w-full px-4 py-2 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" />
+              <h1 className="text-sm font-black text-slate-800 leading-none">
+                {perfil?.nombre_negocio || 'Mi Dulcería'}
+              </h1>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                Maxi Panel v2
+              </span>
             </div>
+          </div>
 
-            <div className="flex gap-2">
-              <div className="w-1/2">
-                <label className="block text-sm font-medium text-slate-600 mb-1">Compraste</label>
-                <input type="number" step="0.01" required value={cantidad} onChange={(e) => setCantidad(e.target.value)} className="w-full px-4 py-2 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" />
-              </div>
-              <div className="w-1/2">
-                <label className="block text-sm font-medium text-slate-600 mb-1">Medida</label>
-                <select value={unidad} onChange={(e) => setUnidad(e.target.value)} className="w-full px-4 py-2 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-white">
-                  <option value="Litros">Litros</option>
-                  <option value="Kg">Kg</option>
-                  <option value="Gramos">Gramos</option>
-                  <option value="Unidades">Unidades</option>
-                </select>
-              </div>
+          <div className="flex items-center gap-2">
+            {/* Indicador de Tasa BCV */}
+            <div className="bg-amber-50 border border-amber-200/60 px-2.5 py-1 rounded-xl text-right">
+              <p className="text-[9px] font-bold text-amber-600 uppercase leading-none">Tasa BCV</p>
+              <p className="text-xs font-black text-amber-700 mt-0.5">{tasaBcv?.toFixed(2)} Bs</p>
             </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-600 mb-1">Costo Total Pagado</label>
-              <div className="flex gap-2">
-                <div className="relative w-1/2">
-                  <DollarSign className="absolute left-3 top-2.5 w-4 h-4 text-green-600" />
-                  <input type="number" step="0.01" placeholder="USD" value={costoUsd} onChange={(e) => handleCostoUsd(e.target.value)} disabled={cargandoTasa} className="w-full pl-8 pr-2 py-2 border rounded-xl focus:ring-2 focus:ring-green-500 outline-none disabled:bg-slate-50" />
-                </div>
-                <div className="relative w-1/2">
-                  <Banknote className="absolute left-3 top-2.5 w-4 h-4 text-blue-600" />
-                  <input type="number" step="0.01" placeholder="Bs" value={costoBs} onChange={(e) => handleCostoBs(e.target.value)} disabled={cargandoTasa} className="w-full pl-8 pr-2 py-2 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-50" />
-                </div>
-              </div>
-            </div>
-
-            <button disabled={procesando || cargandoTasa} type="submit" className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-3 rounded-xl font-bold shadow-md hover:bg-blue-700 disabled:opacity-50 mt-2">
-              {procesando ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-              Añadir a existencias
+            
+            {/* Botón de Salir Discreto */}
+            <button 
+              onClick={cerrarSesion} 
+              className="p-2 text-slate-400 hover:text-red-500 rounded-xl hover:bg-red-50 transition-colors"
+              title="Salir del sistema"
+            >
+              <LogOut className="w-5 h-5" />
             </button>
-          </form>
-        </div>
+          </div>
+        </header>
 
-        {/* TABLA DE ALMACÉN INTELIGENTE */}
-        <div className="lg:col-span-2 bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
-          <h3 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2"><Package className="w-5 h-5 text-slate-500"/> Almacén</h3>
+        {/* CONTENEDOR DE PANTALLAS DINÁMICAS (ZONA DE JUEGO) */}
+        <main className="flex-1 p-4 overflow-y-auto">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={tabActiva}
+              initial={{ opacity: 0, x: 15 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -15 }}
+              transition={{ duration: 0.15 }}
+              className="h-full"
+            >
+              {tabActiva === 'alacena' && <MiAlacena usuario={usuario} tasaBcv={tasaBcv} />}
+              {tabActiva === 'cocina' && <LaCocina usuario={usuario} tasaBcv={tasaBcv} />}
+              {tabActiva === 'nevera' && <MiNevera usuario={usuario} tasaBcv={tasaBcv} />}
+              {tabActiva === 'cuentas' && <MisCuentas usuario={usuario} tasaBcv={tasaBcv} />}
+            </motion.div>
+          </AnimatePresence>
+        </main>
+
+        {/* 📋 BARRA DE NAVEGACIÓN INFERIOR (ZONA DEL PULGAR) */}
+        <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-white border-t border-slate-100 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] px-2 py-2 flex justify-around items-center z-50 rounded-t-3xl">
           
-          {cargando ? ( <p className="text-slate-500 animate-pulse">Cargando...</p> ) : materiales.length === 0 ? (
-            <div className="text-center py-10 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-              <Package className="w-10 h-10 mx-auto text-slate-300 mb-2" />
-              <p className="text-slate-500 font-medium">Tu almacén está vacío.</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-100 text-sm text-slate-500">
-                    <th className="pb-3 font-medium">Material</th>
-                    <th className="pb-3 font-medium">Disponible</th>
-                    <th className="pb-3 font-medium">Costo por Unidad</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {materiales.map((item) => (
-                    <motion.tr initial={{ opacity: 0 }} animate={{ opacity: 1 }} key={item.id} className="border-b border-slate-50 hover:bg-slate-50">
-                      <td className="py-4 font-bold text-slate-700">{item.nombre}</td>
-                      <td className="py-4"><span className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-sm font-bold">{item.cantidad_actual} {item.unidad_medida}</span></td>
-                      <td className="py-4">
-                        <div className="flex flex-col">
-                          <span className="text-green-600 font-black">${item.costo_promedio_usd?.toFixed(2)}</span>
-                          <span className="text-xs font-bold text-slate-400">{tasaBcv ? (item.costo_promedio_usd * tasaBcv).toFixed(2) : '...'} Bs</span>
-                        </div>
-                      </td>
-                    </motion.tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+          {/* Pestaña: Alacena */}
+          <button
+            onClick={() => setTabActiva('alacena')}
+            className={`flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all ${
+              tabActiva === 'alacena' 
+                ? 'bg-emerald-50 text-emerald-600 scale-105 font-black' 
+                : 'text-slate-400 font-medium'
+            }`}
+          >
+            <Archive className="w-5 h-5" />
+            <span className="text-[10px] mt-1 tracking-tight">Alacena</span>
+          </button>
+
+          {/* Pestaña: La Cocina */}
+          <button
+            onClick={() => setTabActiva('cocina')}
+            className={`flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all ${
+              tabActiva === 'cocina' 
+                ? 'bg-amber-50 text-amber-600 scale-105 font-black' 
+                : 'text-slate-400 font-medium'
+            }`}
+          >
+            <Soup className="w-5 h-5" />
+            <span className="text-[10px] mt-1 tracking-tight">La Cocina</span>
+          </button>
+
+          {/* Pestaña: Mi Nevera */}
+          <button
+            onClick={() => setTabActiva('nevera')}
+            className={`flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all ${
+              tabActiva === 'nevera' 
+                ? 'bg-blue-50 text-blue-600 scale-105 font-black' 
+                : 'text-slate-400 font-medium'
+            }`}
+          >
+            <Store className="w-5 h-5" />
+            <span className="text-[10px] mt-1 tracking-tight">Mi Nevera</span>
+          </button>
+
+          {/* Pestaña: Mis Cuentas */}
+          <button
+            onClick={() => setTabActiva('cuentas')}
+            className={`flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all ${
+              tabActiva === 'cuentas' 
+                ? 'bg-indigo-50 text-indigo-600 scale-105 font-black' 
+                : 'text-slate-400 font-medium'
+            }`}
+          >
+            <Coins className="w-5 h-5" />
+            <span className="text-[10px] mt-1 tracking-tight">Finanzas</span>
+          </button>
+
+        </nav>
+
       </div>
     </div>
   );
