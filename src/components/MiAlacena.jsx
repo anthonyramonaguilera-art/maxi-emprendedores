@@ -9,7 +9,6 @@ export default function MiAlacena({ usuario, tasaBcv }) {
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
   const [guardando, setGuardando] = useState(false);
 
-  // Estados del formulario
   const [nombre, setNombre] = useState('');
   const [costoUsd, setCostoUsd] = useState('');
   const [costoBs, setCostoBs] = useState('');
@@ -23,12 +22,20 @@ export default function MiAlacena({ usuario, tasaBcv }) {
   }, [usuario]);
 
   const cargarAlacena = async () => {
+    // Si no hay usuario definido por prop, lo buscamos en la sesión
+    let currentUserId = usuario?.id;
+    if (!currentUserId) {
+      const { data: { user } } = await supabase.auth.getUser();
+      currentUserId = user?.id;
+    }
+    if (!currentUserId) return;
+
     setCargando(true);
     try {
       const { data, error } = await supabase
         .from('insumos')
         .select('*')
-        .eq('user_id', usuario.id)
+        .eq('user_id', currentUserId)
         .order('nombre', { ascending: true });
       
       if (error) throw error;
@@ -40,20 +47,21 @@ export default function MiAlacena({ usuario, tasaBcv }) {
     }
   };
 
-  // --- LÓGICA DE INPUTS SINCRONIZADOS (Dólares <-> Bolívares) ---
   const handleUsdChange = (valor) => {
-    setCostoUsd(valor);
-    if (valor && tasaBcv) {
-      setCostoBs((parseFloat(valor) * tasaBcv).toFixed(2));
+    const valorLimpio = valor.replace(',', '.');
+    setCostoUsd(valorLimpio);
+    if (valorLimpio && tasaBcv) {
+      setCostoBs((parseFloat(valorLimpio) * tasaBcv).toFixed(2));
     } else {
       setCostoBs('');
     }
   };
 
   const handleBsChange = (valor) => {
-    setCostoBs(valor);
-    if (valor && tasaBcv) {
-      setCostoUsd((parseFloat(valor) / tasaBcv).toFixed(2));
+    const valorLimpio = valor.replace(',', '.');
+    setCostoBs(valorLimpio);
+    if (valorLimpio && tasaBcv) {
+      setCostoUsd((parseFloat(valorLimpio) / tasaBcv).toFixed(2));
     } else {
       setCostoUsd('');
     }
@@ -65,11 +73,23 @@ export default function MiAlacena({ usuario, tasaBcv }) {
     setGuardando(true);
 
     try {
+      // SALVAVIDAS: Garantizamos obtener el ID del usuario real
+      let currentUserId = usuario?.id;
+      if (!currentUserId) {
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) throw new Error("Sesión no encontrada. Por favor recarga la página.");
+        currentUserId = user.id;
+      }
+
+      // Limpiamos comas accidentales para evitar errores matemáticos en la Base de Datos
+      const costoLimpio = parseFloat(costoUsd.toString().replace(',', '.'));
+      const cantidadLimpia = parseFloat(cantidad.toString().replace(',', '.'));
+
       await supabase.from('insumos').insert([{
-        user_id: usuario.id,
+        user_id: currentUserId,
         nombre: nombre,
-        costo_usd: parseFloat(costoUsd),
-        cantidad_actual: parseFloat(cantidad),
+        costo_usd: costoLimpio,
+        cantidad_actual: cantidadLimpia,
         unidad_medida: unidadMedida
       }]);
       
@@ -154,23 +174,26 @@ export default function MiAlacena({ usuario, tasaBcv }) {
         <Plus className="w-8 h-8" />
       </button>
 
+      {/* MODAL CON CAPA SUPERIOR ABSOLUTA PARA TAPAR EL MENÚ */}
       <AnimatePresence>
         {mostrarFormulario && (
           <>
+            {/* Overlay Oscuro: Z-Index 60 */}
             <motion.div 
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-slate-900/40 z-40 max-w-md mx-auto"
+              className="fixed inset-0 bg-slate-900/60 z-[60] max-w-md mx-auto backdrop-blur-sm"
               onClick={() => setMostrarFormulario(false)}
             />
-            {/* CORRECCIÓN: Agregado max-h-[85vh] y overflow-y-auto para que el botón no se esconda */}
+            
+            {/* Cajón Inferior: Z-Index 70 */}
             <motion.div
               initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 250 }}
-              className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[2.5rem] shadow-2xl z-50 p-6 pb-10 max-h-[85vh] overflow-y-auto flex flex-col"
+              className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[2.5rem] shadow-[0_-10px_40px_rgba(0,0,0,0.2)] z-[70] p-6 pb-8 max-h-[90vh] overflow-y-auto flex flex-col"
             >
               <div className="flex justify-between items-center mb-4 shrink-0">
                 <h3 className="font-black text-xl text-slate-800">Nueva Compra</h3>
-                <button onClick={() => setMostrarFormulario(false)} className="bg-slate-100 p-2 rounded-full text-slate-500"><X className="w-5 h-5"/></button>
+                <button onClick={() => setMostrarFormulario(false)} className="bg-slate-100 p-2 rounded-full text-slate-500 active:scale-90 transition-transform"><X className="w-5 h-5"/></button>
               </div>
 
               <form onSubmit={guardarInsumo} className="space-y-4 shrink-0">
@@ -179,7 +202,6 @@ export default function MiAlacena({ usuario, tasaBcv }) {
                   <input type="text" required placeholder="Ej: Leche Upaca, Vasos 67..." value={nombre} onChange={e => setNombre(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-800 px-4 py-3 rounded-2xl outline-none focus:border-emerald-500 font-bold mt-1" />
                 </div>
                 
-                {/* BLOQUE SINCRONIZADO DE MONEDAS */}
                 <div className="bg-emerald-50/50 border border-emerald-100 p-3 rounded-2xl">
                   <label className="text-xs font-black text-emerald-600 uppercase mb-2 flex items-center gap-1">
                     <RefreshCw className="w-3 h-3" /> Costo Total (Llena solo uno)
@@ -187,11 +209,11 @@ export default function MiAlacena({ usuario, tasaBcv }) {
                   <div className="grid grid-cols-2 gap-3">
                     <div className="relative">
                       <span className="absolute left-3 top-3.5 text-slate-400 font-black">$</span>
-                      <input type="number" step="0.01" required placeholder="0.00" value={costoUsd} onChange={e => handleUsdChange(e.target.value)} className="w-full bg-white border border-slate-200 text-slate-800 pl-8 pr-3 py-3 rounded-xl outline-none focus:border-emerald-500 font-black" />
+                      <input type="text" inputMode="decimal" required placeholder="0.00" value={costoUsd} onChange={e => handleUsdChange(e.target.value)} className="w-full bg-white border border-slate-200 text-slate-800 pl-8 pr-3 py-3 rounded-xl outline-none focus:border-emerald-500 font-black" />
                     </div>
                     <div className="relative">
                       <span className="absolute left-3 top-3.5 text-slate-400 font-black">Bs</span>
-                      <input type="number" step="0.01" required placeholder="0.00" value={costoBs} onChange={e => handleBsChange(e.target.value)} className="w-full bg-white border border-slate-200 text-slate-800 pl-9 pr-3 py-3 rounded-xl outline-none focus:border-emerald-500 font-black" />
+                      <input type="text" inputMode="decimal" required placeholder="0.00" value={costoBs} onChange={e => handleBsChange(e.target.value)} className="w-full bg-white border border-slate-200 text-slate-800 pl-9 pr-3 py-3 rounded-xl outline-none focus:border-emerald-500 font-black" />
                     </div>
                   </div>
                 </div>
@@ -199,7 +221,7 @@ export default function MiAlacena({ usuario, tasaBcv }) {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs font-bold text-slate-400 uppercase ml-1">¿Cuánto trae?</label>
-                    <input type="number" step="0.01" required placeholder="Ej: 1, 900, 50" value={cantidad} onChange={e => setCantidad(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-800 px-4 py-3 rounded-2xl outline-none focus:border-emerald-500 font-black mt-1" />
+                    <input type="text" inputMode="decimal" required placeholder="Ej: 1, 900, 50" value={cantidad} onChange={e => setCantidad(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-800 px-4 py-3 rounded-2xl outline-none focus:border-emerald-500 font-black mt-1" />
                   </div>
                   <div>
                     <label className="text-xs font-bold text-slate-400 uppercase ml-1">¿En qué se mide?</label>
@@ -212,7 +234,7 @@ export default function MiAlacena({ usuario, tasaBcv }) {
                   </div>
                 </div>
 
-                <button type="submit" disabled={guardando} className="w-full bg-emerald-500 text-white font-black text-lg py-4 rounded-2xl mt-2 shadow-lg shadow-emerald-200 active:scale-95 transition-transform flex justify-center">
+                <button type="submit" disabled={guardando} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black text-lg py-4 rounded-2xl mt-4 shadow-lg shadow-emerald-200 active:scale-[0.98] transition-all flex justify-center">
                   {guardando ? <Loader2 className="w-6 h-6 animate-spin" /> : "GUARDAR EN ALACENA"}
                 </button>
               </form>
