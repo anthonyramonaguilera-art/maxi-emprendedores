@@ -15,18 +15,19 @@ export default function MiAlacena({ usuario, tasaBcv }) {
   const [cantidad, setCantidad] = useState('');
   const [unidadMedida, setUnidadMedida] = useState('Bolsas/Paquetes');
 
-  const unidadesSugeridas = ['Bolsas/Paquetes', 'Kilos', 'Litros', 'Unidades (Vasos/Tapas)', 'Cucharadas'];
+  const unidadesSugeridas = ['Bolsas/Paquetes', 'Kilos/Gramos', 'Litros/Ml', 'Unidades (Vasos/Tapas)', 'Cucharadas'];
 
+  // CORRECCIÓN 1: Forzamos la carga siempre que el componente se monte o cambie el usuario
   useEffect(() => {
-    if (usuario?.id) cargarAlacena();
+    cargarAlacena();
   }, [usuario]);
 
   const cargarAlacena = async () => {
-    // Si no hay usuario definido por prop, lo buscamos en la sesión
+    // Buscamos el usuario de forma agresiva por si React se durmió
     let currentUserId = usuario?.id;
     if (!currentUserId) {
-      const { data: { user } } = await supabase.auth.getUser();
-      currentUserId = user?.id;
+      const { data: { session } } = await supabase.auth.getSession();
+      currentUserId = session?.user?.id;
     }
     if (!currentUserId) return;
 
@@ -67,31 +68,56 @@ export default function MiAlacena({ usuario, tasaBcv }) {
     }
   };
 
+  // CORRECCIÓN 2: Lógica de Consolidación (Merge de productos)
   const guardarInsumo = async (e) => {
     e.preventDefault();
     if (!nombre || !costoUsd || !cantidad) return;
     setGuardando(true);
 
     try {
-      // SALVAVIDAS: Garantizamos obtener el ID del usuario real
       let currentUserId = usuario?.id;
       if (!currentUserId) {
-        const { data: { user }, error: authError } = await supabase.auth.getUser();
-        if (authError || !user) throw new Error("Sesión no encontrada. Por favor recarga la página.");
-        currentUserId = user.id;
+        const { data: { session }, error: authError } = await supabase.auth.getSession();
+        if (authError || !session) throw new Error("Sesión no encontrada.");
+        currentUserId = session.user.id;
       }
 
-      // Limpiamos comas accidentales para evitar errores matemáticos en la Base de Datos
       const costoLimpio = parseFloat(costoUsd.toString().replace(',', '.'));
       const cantidadLimpia = parseFloat(cantidad.toString().replace(',', '.'));
+      const nombreLimpio = nombre.trim();
 
-      await supabase.from('insumos').insert([{
-        user_id: currentUserId,
-        nombre: nombre,
-        costo_usd: costoLimpio,
-        cantidad_actual: cantidadLimpia,
-        unidad_medida: unidadMedida
-      }]);
+      // Buscamos si ya existe el mismo nombre con la misma unidad de medida
+      const { data: existente, error: searchError } = await supabase
+        .from('insumos')
+        .select('*')
+        .eq('user_id', currentUserId)
+        .ilike('nombre', nombreLimpio) // Busca ignorando mayúsculas/minúsculas
+        .eq('unidad_medida', unidadMedida)
+        .maybeSingle(); // maybeSingle evita que colapse si no hay resultados
+
+      if (searchError) throw searchError;
+
+      if (existente) {
+        // SI EXISTE: Le sumamos la cantidad y el costo al producto viejo
+        const { error: updateError } = await supabase
+          .from('insumos')
+          .update({
+            cantidad_actual: existente.cantidad_actual + cantidadLimpia,
+            costo_usd: existente.costo_usd + costoLimpio
+          })
+          .eq('id', existente.id);
+        if (updateError) throw updateError;
+      } else {
+        // SI ES NUEVO: Lo creamos desde cero
+        const { error: insertError } = await supabase.from('insumos').insert([{
+          user_id: currentUserId,
+          nombre: nombreLimpio,
+          costo_usd: costoLimpio,
+          cantidad_actual: cantidadLimpia,
+          unidad_medida: unidadMedida
+        }]);
+        if (insertError) throw insertError;
+      }
       
       setNombre(''); setCostoUsd(''); setCostoBs(''); setCantidad('');
       setMostrarFormulario(false);
@@ -137,10 +163,8 @@ export default function MiAlacena({ usuario, tasaBcv }) {
         ) : (
           insumos.map((item) => (
             <motion.div 
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              key={item.id} 
-              className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex justify-between items-center"
+              initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+              key={item.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex justify-between items-center"
             >
               <div className="flex-1">
                 <h3 className="font-black text-slate-800">{item.nombre}</h3>
@@ -156,10 +180,7 @@ export default function MiAlacena({ usuario, tasaBcv }) {
                 <span className="text-[10px] font-bold text-slate-400">{(item.costo_usd * (tasaBcv || 1)).toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs</span>
               </div>
 
-              <button 
-                onClick={() => eliminarInsumo(item.id)}
-                className="w-10 h-10 bg-red-50 text-red-400 rounded-xl flex items-center justify-center active:scale-90 transition-transform"
-              >
+              <button onClick={() => eliminarInsumo(item.id)} className="w-10 h-10 bg-red-50 text-red-400 rounded-xl flex items-center justify-center active:scale-90 transition-transform">
                 <Trash2 className="w-5 h-5" />
               </button>
             </motion.div>
@@ -167,30 +188,15 @@ export default function MiAlacena({ usuario, tasaBcv }) {
         )}
       </div>
 
-      <button 
-        onClick={() => setMostrarFormulario(true)}
-        className="fixed bottom-20 right-4 w-14 h-14 bg-emerald-500 text-white rounded-full shadow-lg shadow-emerald-200 flex items-center justify-center active:scale-95 transition-transform z-30"
-      >
+      <button onClick={() => setMostrarFormulario(true)} className="fixed bottom-20 right-4 w-14 h-14 bg-emerald-500 text-white rounded-full shadow-lg shadow-emerald-200 flex items-center justify-center active:scale-95 transition-transform z-30">
         <Plus className="w-8 h-8" />
       </button>
 
-      {/* MODAL CON CAPA SUPERIOR ABSOLUTA PARA TAPAR EL MENÚ */}
       <AnimatePresence>
         {mostrarFormulario && (
           <>
-            {/* Overlay Oscuro: Z-Index 60 */}
-            <motion.div 
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-slate-900/60 z-[60] max-w-md mx-auto backdrop-blur-sm"
-              onClick={() => setMostrarFormulario(false)}
-            />
-            
-            {/* Cajón Inferior: Z-Index 70 */}
-            <motion.div
-              initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-              transition={{ type: "spring", damping: 25, stiffness: 250 }}
-              className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[2.5rem] shadow-[0_-10px_40px_rgba(0,0,0,0.2)] z-[70] p-6 pb-8 max-h-[90vh] overflow-y-auto flex flex-col"
-            >
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-slate-900/60 z-[60] max-w-md mx-auto backdrop-blur-sm" onClick={() => setMostrarFormulario(false)} />
+            <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 250 }} className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[2.5rem] shadow-[0_-10px_40px_rgba(0,0,0,0.2)] z-[70] p-6 pb-8 max-h-[90vh] overflow-y-auto flex flex-col">
               <div className="flex justify-between items-center mb-4 shrink-0">
                 <h3 className="font-black text-xl text-slate-800">Nueva Compra</h3>
                 <button onClick={() => setMostrarFormulario(false)} className="bg-slate-100 p-2 rounded-full text-slate-500 active:scale-90 transition-transform"><X className="w-5 h-5"/></button>
@@ -203,9 +209,7 @@ export default function MiAlacena({ usuario, tasaBcv }) {
                 </div>
                 
                 <div className="bg-emerald-50/50 border border-emerald-100 p-3 rounded-2xl">
-                  <label className="text-xs font-black text-emerald-600 uppercase mb-2 flex items-center gap-1">
-                    <RefreshCw className="w-3 h-3" /> Costo Total (Llena solo uno)
-                  </label>
+                  <label className="text-xs font-black text-emerald-600 uppercase mb-2 flex items-center gap-1"><RefreshCw className="w-3 h-3" /> Costo Total (Llena solo uno)</label>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="relative">
                       <span className="absolute left-3 top-3.5 text-slate-400 font-black">$</span>
@@ -221,7 +225,7 @@ export default function MiAlacena({ usuario, tasaBcv }) {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs font-bold text-slate-400 uppercase ml-1">¿Cuánto trae?</label>
-                    <input type="text" inputMode="decimal" required placeholder="Ej: 1, 900, 50" value={cantidad} onChange={e => setCantidad(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-800 px-4 py-3 rounded-2xl outline-none focus:border-emerald-500 font-black mt-1" />
+                    <input type="text" inputMode="decimal" required placeholder="Ej: 1, 900, 400" value={cantidad} onChange={e => setCantidad(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-800 px-4 py-3 rounded-2xl outline-none focus:border-emerald-500 font-black mt-1" />
                   </div>
                   <div>
                     <label className="text-xs font-bold text-slate-400 uppercase ml-1">¿En qué se mide?</label>

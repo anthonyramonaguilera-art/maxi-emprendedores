@@ -1,28 +1,42 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { ShoppingBag, Plus, Minus, CheckCircle2, Loader2 } from 'lucide-react';
+import { ShoppingBag, Plus, Minus, CheckCircle2, Loader2, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function MiNevera({ usuario, tasaBcv }) {
   const [productos, setProductos] = useState([]);
   const [carrito, setCarrito] = useState([]);
-  const [cargando, setCargando] = useState(false); // Blindado
+  const [cargando, setCargando] = useState(false); 
   const [despachando, setDespachando] = useState(false);
   const [mostrarCheckout, setMostrarCheckout] = useState(false);
   const [exitoVisual, setExitoVisual] = useState(false);
 
+  // CORRECCIÓN: Siempre forzamos la carga al abrir la pestaña
   useEffect(() => {
-    if (usuario?.id) cargarNevera();
+    cargarNevera();
   }, [usuario]);
 
   const cargarNevera = async () => {
+    // SALVAVIDAS: Buscamos la sesión activamente
+    let currentUserId = usuario?.id;
+    if (!currentUserId) {
+      const { data: { session } } = await supabase.auth.getSession();
+      currentUserId = session?.user?.id;
+    }
+    if (!currentUserId) return;
+
     setCargando(true);
     try {
-      const { data, error } = await supabase.from('productos').select('*').eq('user_id', usuario.id).order('nombre', { ascending: true });
+      const { data, error } = await supabase
+        .from('productos')
+        .select('*')
+        .eq('user_id', currentUserId)
+        .order('nombre', { ascending: true });
+      
       if (error) throw error;
       if (data) setProductos(data);
     } catch (error) {
-      console.error(error);
+      console.error("Error cargando la nevera:", error);
     } finally {
       setCargando(false);
     }
@@ -60,15 +74,23 @@ export default function MiNevera({ usuario, tasaBcv }) {
   const finalizarDespacho = async () => {
     setDespachando(true);
     try {
+      let currentUserId = usuario?.id;
+      if (!currentUserId) {
+        const { data: { session } } = await supabase.auth.getSession();
+        currentUserId = session.user.id;
+      }
+
       for (const item of carrito) {
+        // 1. Guardar la Venta
         await supabase.from('ventas').insert([{
-          user_id: usuario.id,
+          user_id: currentUserId,
           producto_id: item.id,
           cantidad: item.cantidadSeleccionada,
           total_usd: item.precio_venta_usd * item.cantidadSeleccionada,
-          total_bs: (item.precio_venta_usd * item.cantidadSeleccionada) * tasaBcv,
-          tasa_bcv_momento: tasaBcv
+          total_bs: (item.precio_venta_usd * item.cantidadSeleccionada) * (tasaBcv || 1),
+          tasa_bcv_momento: tasaBcv || 1
         }]);
+        // 2. Descontar Stock
         await supabase.from('productos').update({ stock_actual: item.stock_actual - item.cantidadSeleccionada }).eq('id', item.id);
       }
       setCarrito([]); setMostrarCheckout(false); setExitoVisual(true);
@@ -122,7 +144,7 @@ export default function MiNevera({ usuario, tasaBcv }) {
 
       <AnimatePresence>
         {exitoVisual && (
-          <motion.div initial={{ opacity: 0, y: 50, scale: 0.9 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="fixed inset-x-4 top-1/3 mx-auto max-w-xs bg-emerald-500 text-white p-4 rounded-3xl shadow-2xl flex flex-col items-center text-center z-50 border-4 border-white">
+          <motion.div initial={{ opacity: 0, y: 50, scale: 0.9 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="fixed inset-x-4 top-1/3 mx-auto max-w-xs bg-emerald-500 text-white p-4 rounded-3xl shadow-2xl flex flex-col items-center text-center z-[80] border-4 border-white">
             <CheckCircle2 className="w-12 h-12 animate-pulse mb-1" />
             <h4 className="font-black text-lg">¡Venta Despachada!</h4>
             <p className="text-xs font-medium text-emerald-100">Dinero en caja y stock actualizado.</p>
@@ -133,14 +155,22 @@ export default function MiNevera({ usuario, tasaBcv }) {
       <AnimatePresence>
         {mostrarCheckout && carrito.length > 0 && (
           <>
-            <div className="fixed inset-0 bg-slate-900/40 z-40 max-w-md mx-auto" onClick={() => setMostrarCheckout(false)} />
-            <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 250 }} className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[2.5rem] shadow-[0_-8px_30px_rgba(0,0,0,0.15)] z-50 p-5 pb-8 border-t border-slate-100">
-              <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mb-4" />
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="font-black text-slate-800 text-lg flex items-center gap-2"><ShoppingBag className="text-blue-500 w-5 h-5" /> Bolsa de Cobro</h3>
-                <span className="text-xs font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-lg">{carrito.length} rubros</span>
+            {/* CORRECCIÓN: Fondo oscuro en Z-60 */}
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-slate-900/60 z-[60] max-w-md mx-auto backdrop-blur-sm" onClick={() => setMostrarCheckout(false)} />
+            
+            {/* CORRECCIÓN: Cajón de Checkout en Z-70 para tapar el menú inferior */}
+            <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 250 }} className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[2.5rem] shadow-[0_-10px_40px_rgba(0,0,0,0.2)] z-[70] p-6 pb-8 border-t border-slate-100 flex flex-col max-h-[85vh]">
+              
+              <div className="flex justify-between items-center mb-4 shrink-0">
+                <div className="flex items-center gap-2">
+                  <ShoppingBag className="text-blue-500 w-6 h-6" /> 
+                  <h3 className="font-black text-slate-800 text-xl">Tu Venta</h3>
+                </div>
+                {/* Agregado botón de X para cerrar */}
+                <button onClick={() => setMostrarCheckout(false)} className="bg-slate-100 p-2 rounded-full text-slate-500 active:scale-90"><X className="w-5 h-5"/></button>
               </div>
-              <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1 mb-4">
+
+              <div className="space-y-2 overflow-y-auto pr-1 mb-4 flex-1">
                 {carrito.map((item) => (
                   <div key={item.id} className="bg-slate-50 p-3 rounded-2xl flex justify-between items-center border border-slate-100">
                     <div className="flex-1 min-w-0 pr-2">
@@ -150,15 +180,16 @@ export default function MiNevera({ usuario, tasaBcv }) {
                         <span className="text-[10px] font-bold text-slate-400">{(item.precio_venta_usd * item.cantidadSeleccionada * (tasaBcv || 1)).toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs</span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl p-1 shadow-sm">
-                      <button onClick={() => modificarCantidad(item.id, -1)} className="p-1 text-slate-500 active:bg-slate-100 rounded-lg"><Minus className="w-3 h-3" /></button>
-                      <span className="font-black text-slate-800 text-sm px-1">{item.cantidadSeleccionada}</span>
-                      <button onClick={() => modificarCantidad(item.id, 1)} className="p-1 text-slate-500 active:bg-slate-100 rounded-lg"><Plus className="w-3 h-3" /></button>
+                    <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl p-1 shadow-sm shrink-0">
+                      <button onClick={() => modificarCantidad(item.id, -1)} className="p-1 text-slate-500 active:bg-slate-100 rounded-lg"><Minus className="w-4 h-4" /></button>
+                      <span className="font-black text-slate-800 text-sm px-1 w-4 text-center">{item.cantidadSeleccionada}</span>
+                      <button onClick={() => modificarCantidad(item.id, 1)} className="p-1 text-slate-500 active:bg-slate-100 rounded-lg"><Plus className="w-4 h-4" /></button>
                     </div>
                   </div>
                 ))}
               </div>
-              <div className="border-t border-dashed border-slate-200 pt-4 pb-4 flex justify-between items-center">
+
+              <div className="border-t border-dashed border-slate-200 pt-4 pb-4 flex justify-between items-center shrink-0">
                 <div>
                   <p className="text-xs font-bold text-slate-400 uppercase">Total a Cobrar</p>
                   <p className="text-3xl font-black text-emerald-600 leading-none mt-1">${totalUsd.toFixed(2)}</p>
@@ -169,8 +200,9 @@ export default function MiNevera({ usuario, tasaBcv }) {
                   </span>
                 </div>
               </div>
-              <button onClick={finalizarDespacho} disabled={despachando} className="w-full bg-blue-600 text-white font-black text-base py-4 rounded-2xl shadow-lg shadow-blue-200 active:scale-[0.98] active:bg-blue-700 transition-all flex items-center justify-center gap-2 disabled:bg-slate-300">
-                {despachando ? <Loader2 className="w-5 h-5 animate-spin" /> : <>💰 CONFIRMAR Y RECIBIR PAGO</>}
+
+              <button onClick={finalizarDespacho} disabled={despachando} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black text-lg py-4 rounded-2xl shadow-lg shadow-blue-500/30 active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:bg-slate-300 shrink-0">
+                {despachando ? <Loader2 className="w-6 h-6 animate-spin" /> : <>💰 CONFIRMAR Y RECIBIR PAGO</>}
               </button>
             </motion.div>
           </>
