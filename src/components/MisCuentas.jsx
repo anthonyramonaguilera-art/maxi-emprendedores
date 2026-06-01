@@ -93,13 +93,19 @@ export default function MisCuentas({ usuario, tasaBcv }) {
         currentUserId = session.user.id;
       }
 
-      const montoLimpio = parseFloat(montoFiadoUsd.toString().replace(',', '.'));
+     const montoLimpio = parseFloat(montoFiadoUsd.toString().replace(',', '.'));
       if (isNaN(montoLimpio)) throw new Error("Monto inválido. Usa números.");
+
+      // Creamos una fecha por defecto: Hoy + 7 días
+      const fechaVencimientoDefault = new Date();
+      fechaVencimientoDefault.setDate(fechaVencimientoDefault.getDate() + 7);
 
       const { error: insertError } = await supabase.from('fiados').insert([{
         user_id: currentUserId,
         cliente: clienteFiado.trim(),
         monto_usd: montoLimpio,
+        monto_total: montoLimpio, // Salvavidas 1
+        fecha_vencimiento: fechaVencimientoDefault.toISOString(), // <-- SALVAVIDAS 2
         descripcion: descripcionFiado || 'Anotación manual'
       }]);
 
