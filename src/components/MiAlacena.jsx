@@ -1,24 +1,58 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
-import { Plus, Trash2, Edit2, Package, Loader2, X } from 'lucide-react';
+import { Plus, Trash2, Edit2, Package, Loader2, X, UploadCloud, Image as ImageIcon, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { addToast } from '../store/toastStore';
+
+const avatarColors = [
+  'bg-emerald-100 text-emerald-700',
+  'bg-blue-100 text-blue-700',
+  'bg-amber-100 text-amber-700',
+  'bg-purple-100 text-purple-700',
+  'bg-rose-100 text-rose-700',
+  'bg-cyan-100 text-cyan-700',
+  'bg-lime-100 text-lime-700',
+  'bg-indigo-100 text-indigo-700',
+];
+
+function getColorFromName(name) {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return avatarColors[Math.abs(hash) % avatarColors.length];
+}
 
 export default function MiAlacena({ usuario, tasaBcv }) {
   const [insumos, setInsumos] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [mostrarModal, setMostrarModal] = useState(false);
-  const [modoEdicion, setModoEdicion] = useState(null); // { id, nombre, cantidad, unidad, costo_total }
+  const [modoEdicion, setModoEdicion] = useState(null);
   const [guardando, setGuardando] = useState(false);
 
-  // Formulario (nuevo o edición)
   const [nombre, setNombre] = useState('');
   const [cantidad, setCantidad] = useState('');
   const [unidad, setUnidad] = useState('kg');
-  const [costoTotal, setCostoTotal] = useState('');
+  const [costoTotalUsd, setCostoTotalUsd] = useState('');
+  const [costoTotalBs, setCostoTotalBs] = useState('');
+
+  const [imagenArchivo, setImagenArchivo] = useState(null);
+  const [imagenPreview, setImagenPreview] = useState('');
+
+  const [sortKey, setSortKey] = useState('nombre-asc');
 
   useEffect(() => {
     cargarInsumos();
   }, [usuario]);
+
+  useEffect(() => {
+    if (insumos.length > 0) {
+      const stockBajoCount = insumos.filter(i => i.cantidad_actual <= 5).length;
+      if (stockBajoCount > 0) {
+        addToast(`⚠️ Tienes ${stockBajoCount} insumo${stockBajoCount !== 1 ? 's' : ''} con stock bajo. Revisa la alacena.`, 'info');
+      }
+    }
+  }, [insumos]);
 
   const cargarInsumos = async () => {
     let currentUserId = usuario?.id;
@@ -44,12 +78,43 @@ export default function MiAlacena({ usuario, tasaBcv }) {
     }
   };
 
+  const obtenerPrecioUnitario = (insumo) => insumo.costo_usd / insumo.cantidad_actual;
+
+  const insumosOrdenados = useMemo(() => {
+    if (!insumos.length) return [];
+    const copy = [...insumos];
+
+    switch (sortKey) {
+      case 'nombre-asc':
+        return copy.sort((a, b) => a.nombre.localeCompare(b.nombre));
+      case 'nombre-desc':
+        return copy.sort((a, b) => b.nombre.localeCompare(a.nombre));
+      case 'precio-asc':
+        return copy.sort((a, b) => obtenerPrecioUnitario(a) - obtenerPrecioUnitario(b));
+      case 'precio-desc':
+        return copy.sort((a, b) => obtenerPrecioUnitario(b) - obtenerPrecioUnitario(a));
+      case 'cantidad-asc':
+        return copy.sort((a, b) => a.cantidad_actual - b.cantidad_actual);
+      case 'cantidad-desc':
+        return copy.sort((a, b) => b.cantidad_actual - a.cantidad_actual);
+      case 'fecha-asc':
+        return copy.sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
+      case 'fecha-desc':
+        return copy.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+      default:
+        return copy;
+    }
+  }, [insumos, sortKey]);
+
   const abrirModalNuevo = () => {
     setModoEdicion(null);
     setNombre('');
     setCantidad('');
     setUnidad('kg');
-    setCostoTotal('');
+    setCostoTotalUsd('');
+    setCostoTotalBs('');
+    setImagenArchivo(null);
+    setImagenPreview('');
     setMostrarModal(true);
   };
 
@@ -59,18 +124,60 @@ export default function MiAlacena({ usuario, tasaBcv }) {
       nombre: insumo.nombre,
       cantidad: insumo.cantidad_actual.toString(),
       unidad: insumo.unidad_medida,
-      costo_total: insumo.costo_usd.toString()
+      costo_usd: insumo.costo_usd.toString(),
+      imagen_url: insumo.imagen_url,
     });
     setNombre(insumo.nombre);
     setCantidad(insumo.cantidad_actual.toString());
     setUnidad(insumo.unidad_medida);
-    setCostoTotal(insumo.costo_usd.toString());
+    const usd = insumo.costo_usd.toString();
+    setCostoTotalUsd(usd);
+    const tasa = tasaBcv || 1;
+    setCostoTotalBs((parseFloat(usd.replace(',', '.')) * tasa).toFixed(2));
+    setImagenArchivo(null);
+    setImagenPreview(insumo.imagen_url || '');
     setMostrarModal(true);
+  };
+
+  const handleUsdChange = (value) => {
+    const raw = value.replace(',', '.');
+    setCostoTotalUsd(value);
+    const num = parseFloat(raw);
+    if (!isNaN(num)) {
+      const tasa = tasaBcv || 1;
+      setCostoTotalBs((num * tasa).toFixed(2));
+    } else {
+      setCostoTotalBs('');
+    }
+  };
+
+  const handleBsChange = (value) => {
+    const raw = value.replace(',', '.');
+    setCostoTotalBs(value);
+    const num = parseFloat(raw);
+    if (!isNaN(num)) {
+      const tasa = tasaBcv || 1;
+      if (tasa > 0) {
+        setCostoTotalUsd((num / tasa).toFixed(2));
+      } else {
+        setCostoTotalUsd('');
+      }
+    } else {
+      setCostoTotalUsd('');
+    }
+  };
+
+  const handleImagenChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setImagenArchivo(file);
+      setImagenPreview(URL.createObjectURL(file));
+    }
   };
 
   const guardarInsumo = async (e) => {
     e.preventDefault();
-    if (!nombre || !cantidad || !costoTotal) return;
+    if (!nombre || !cantidad || !costoTotalUsd) return;
 
     setGuardando(true);
     try {
@@ -81,41 +188,64 @@ export default function MiAlacena({ usuario, tasaBcv }) {
       }
 
       const cantidadNum = parseFloat(cantidad.toString().replace(',', '.'));
-      const costoNum = parseFloat(costoTotal.toString().replace(',', '.'));
+      const costoNum = parseFloat(costoTotalUsd.toString().replace(',', '.'));
+
+      let imagenFinalUrl = modoEdicion ? modoEdicion.imagen_url : null;
+
+      if (imagenArchivo) {
+        const fileExt = imagenArchivo.name.split('.').pop();
+        const fileName = `${currentUserId}-${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+        const { error: uploadError } = await supabase.storage
+          .from('insumos')
+          .upload(fileName, imagenArchivo, {
+            cacheControl: '3600',
+            upsert: false,
+          });
+        if (uploadError) {
+          addToast('Error al subir imagen: ' + uploadError.message, 'error');
+          setGuardando(false);
+          return;
+        }
+        const { data: publicUrlData } = supabase.storage
+          .from('insumos')
+          .getPublicUrl(fileName);
+        imagenFinalUrl = publicUrlData.publicUrl;
+      }
+
+      const insumoData = {
+        nombre: nombre.trim(),
+        cantidad_actual: cantidadNum,
+        unidad_medida: unidad,
+        costo_usd: costoNum,
+        imagen_url: imagenFinalUrl,
+      };
 
       if (modoEdicion) {
-        // Actualizar
         const { error } = await supabase
           .from('insumos')
-          .update({
-            nombre: nombre.trim(),
-            cantidad_actual: cantidadNum,
-            unidad_medida: unidad,
-            costo_usd: costoNum
-          })
+          .update(insumoData)
           .eq('id', modoEdicion.id);
         if (error) throw error;
       } else {
-        // Insertar nuevo
-        const { error } = await supabase.from('insumos').insert([{
-          user_id: currentUserId,
-          nombre: nombre.trim(),
-          cantidad_actual: cantidadNum,
-          unidad_medida: unidad,
-          costo_usd: costoNum
-        }]);
+        const { error } = await supabase
+          .from('insumos')
+          .insert([{ ...insumoData, user_id: currentUserId }]);
         if (error) throw error;
       }
 
       setNombre('');
       setCantidad('');
       setUnidad('kg');
-      setCostoTotal('');
+      setCostoTotalUsd('');
+      setCostoTotalBs('');
+      setImagenArchivo(null);
+      setImagenPreview('');
       setMostrarModal(false);
       setModoEdicion(null);
       await cargarInsumos();
+      addToast(modoEdicion ? 'Insumo actualizado' : 'Insumo creado', 'success');
     } catch (error) {
-      alert('Error al guardar: ' + error.message);
+      addToast('Error al guardar: ' + error.message, 'error');
     } finally {
       setGuardando(false);
     }
@@ -129,12 +259,15 @@ export default function MiAlacena({ usuario, tasaBcv }) {
   };
 
   if (cargando) {
-    return <div className="flex justify-center items-center h-64"><Loader2 className="w-8 h-8 animate-spin text-emerald-500" /></div>;
+    return (
+      <div className="flex justify-center items-center h-64">
+        <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
+      </div>
+    );
   }
 
   return (
     <div className="space-y-4 font-sans pb-24">
-      {/* Header */}
       <div className="bg-emerald-50 rounded-3xl p-4 shadow-sm flex items-center gap-3 border border-emerald-100">
         <Package className="w-8 h-8 text-emerald-600" />
         <div>
@@ -143,29 +276,73 @@ export default function MiAlacena({ usuario, tasaBcv }) {
         </div>
       </div>
 
-      {/* Lista */}
+      <div className="flex items-center gap-2">
+        <label htmlFor="sort-alacena" className="text-xs font-bold text-slate-500 uppercase tracking-wider">Ordenar:</label>
+        <select
+          id="sort-alacena"
+          value={sortKey}
+          onChange={(e) => setSortKey(e.target.value)}
+          className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-emerald-500 shadow-sm"
+        >
+          <option value="nombre-asc">Nombre (A-Z)</option>
+          <option value="nombre-desc">Nombre (Z-A)</option>
+          <option value="precio-asc">Precio / unidad (Menor a Mayor)</option>
+          <option value="precio-desc">Precio / unidad (Mayor a Menor)</option>
+          <option value="cantidad-desc">Cantidad (Mayor a Menor)</option>
+          <option value="cantidad-asc">Cantidad (Menor a Mayor)</option>
+          <option value="fecha-desc">Más reciente primero</option>
+          <option value="fecha-asc">Más antiguo primero</option>
+        </select>
+      </div>
+
       <div className="space-y-3">
-        {insumos.length === 0 ? (
+        {insumosOrdenados.length === 0 ? (
           <div className="bg-white rounded-3xl p-8 text-center border border-dashed border-slate-200">
             <Package className="w-12 h-12 mx-auto text-slate-300 mb-2" />
             <p className="text-slate-400 font-medium">Tu alacena está vacía</p>
             <p className="text-xs text-slate-400 mt-1">Toca el botón + para agregar insumos</p>
           </div>
         ) : (
-          insumos.map((insumo) => {
+          insumosOrdenados.map((insumo) => {
             const costoUnitarioUsd = insumo.costo_usd / insumo.cantidad_actual;
             const costoUnitarioBs = costoUnitarioUsd * (tasaBcv || 1);
+            const avatarColor = getColorFromName(insumo.nombre);
+            const isLowStock = insumo.cantidad_actual <= 5;
+
             return (
-              <div key={insumo.id} className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 flex items-center justify-between">
-                <div className="flex-1">
-                  <h3 className="font-black text-slate-800">{insumo.nombre}</h3>
+              <div key={insumo.id} className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 flex items-center gap-3">
+                {insumo.imagen_url ? (
+                  <img
+                    src={insumo.imagen_url}
+                    alt={insumo.nombre}
+                    className="w-10 h-10 rounded-full object-cover border border-slate-200 flex-shrink-0"
+                  />
+                ) : (
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${avatarColor}`}>
+                    {insumo.nombre.substring(0, 2).toUpperCase()}
+                  </div>
+                )}
+
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-black text-slate-800">{insumo.nombre}</h3>
+                    {isLowStock && (
+                      <span
+                        className="inline-flex items-center gap-1 bg-amber-100 text-amber-700 text-[10px] font-black px-2 py-0.5 rounded-full"
+                        title="Stock bajo, ¡reabastece pronto!"
+                      >
+                        <AlertTriangle className="w-3 h-3" />
+                        Stock bajo
+                      </span>
+                    )}
+                  </div>
                   <div className="flex gap-3 mt-1 flex-wrap">
                     <span className="text-xs font-bold text-slate-400">{insumo.cantidad_actual} {insumo.unidad_medida}</span>
                     <span className="text-xs font-bold text-emerald-600">${costoUnitarioUsd.toFixed(2)} / unidad</span>
                     <span className="text-[10px] font-bold text-slate-400">{costoUnitarioBs.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs</span>
                   </div>
                 </div>
-                <div className="flex gap-1">
+                <div className="flex gap-1 flex-shrink-0">
                   <button
                     onClick={() => abrirModalEditar(insumo)}
                     className="p-2 text-blue-500 hover:bg-blue-50 rounded-xl active:scale-90 transition-all"
@@ -187,7 +364,6 @@ export default function MiAlacena({ usuario, tasaBcv }) {
         )}
       </div>
 
-      {/* Botón flotante + (corregido) */}
       <button
         onClick={abrirModalNuevo}
         className="fixed bottom-20 left-1/2 -translate-x-1/2 w-14 h-14 bg-emerald-500 text-white rounded-full shadow-lg shadow-emerald-200 flex items-center justify-center active:scale-95 transition-transform z-30"
@@ -196,7 +372,6 @@ export default function MiAlacena({ usuario, tasaBcv }) {
         <Plus className="w-8 h-8" />
       </button>
 
-      {/* Modal (crear o editar) */}
       <AnimatePresence>
         {mostrarModal && (
           <>
@@ -253,18 +428,66 @@ export default function MiAlacena({ usuario, tasaBcv }) {
                     <option value="unidad">unidad</option>
                   </select>
                 </div>
-                <div className="relative">
-                  <span className="absolute left-3 top-3 text-slate-400 font-bold">$</span>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="Costo total que pagaste"
-                    value={costoTotal}
-                    onChange={(e) => setCostoTotal(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-4 py-3 outline-none focus:border-emerald-500"
-                    required
-                  />
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">Costo total</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="relative">
+                      <span className="absolute left-3 top-3 text-emerald-600 font-bold text-sm">$</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="USD"
+                        value={costoTotalUsd}
+                        onChange={(e) => handleUsdChange(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-4 py-3 outline-none focus:border-emerald-500 font-bold"
+                        required
+                      />
+                    </div>
+                    <div className="relative">
+                      <span className="absolute left-3 top-3 text-amber-600 font-bold text-sm">Bs</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="Bolívares"
+                        value={costoTotalBs}
+                        onChange={(e) => handleBsChange(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-4 py-3 outline-none focus:border-amber-500 font-bold"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-slate-400 ml-1">
+                    Tasa actual: {tasaBcv?.toFixed(2) || '---'} Bs/$
+                  </p>
                 </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-400 uppercase ml-1 flex items-center gap-1 mb-1">
+                    <ImageIcon className="w-4 h-4" /> Imagen del insumo
+                  </label>
+                  <div className="relative border-2 border-dashed border-slate-200 rounded-xl p-4 text-center hover:border-emerald-400 transition-colors">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImagenChange}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    />
+                    {imagenPreview ? (
+                      <div className="flex items-center gap-3">
+                        <img src={imagenPreview} alt="vista previa" className="w-12 h-12 rounded-full object-cover border" />
+                        <span className="text-sm font-bold text-slate-600 truncate">
+                          {imagenArchivo ? imagenArchivo.name : 'Imagen actual'}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="text-slate-400">
+                        <UploadCloud className="w-8 h-8 mx-auto mb-1" />
+                        <p className="text-xs font-bold">Toca para subir imagen</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <button
                   type="submit"
                   disabled={guardando}

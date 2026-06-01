@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Soup, CakeSlice, Plus, ArrowRight, ArrowLeft, Loader2, Trash2, Store, X, Zap } from 'lucide-react';
+import { Soup, CakeSlice, Plus, ArrowRight, ArrowLeft, Loader2, Trash2, Store, X, Zap, IceCream } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { addToast } from '../store/toastStore';
+import { incrementarRacha } from '../store/rachaStore';
 
 export default function LaCocina({ usuario, tasaBcv }) {
   const [alacena, setAlacena] = useState([]);
@@ -15,10 +17,15 @@ export default function LaCocina({ usuario, tasaBcv }) {
   
   const [rendimiento, setRendimiento] = useState('');
   const [nombreProducto, setNombreProducto] = useState('');
-  const [precioVentaFinal, setPrecioVentaFinal] = useState('');
+  const [precioVentaUsd, setPrecioVentaUsd] = useState('');
+  const [precioVentaBs, setPrecioVentaBs] = useState('');
 
-  // NUEVOS ESTADOS: Costos Operativos (Gas, Luz, Agua)
-  const [porcentajeOperativo, setPorcentajeOperativo] = useState(15); // 15% por defecto
+  // --- Campos para Congelador ---
+  const [tempCongelado, setTempCongelado] = useState('');
+  const [tiempoCongelado, setTiempoCongelado] = useState('');
+  const [requierePalito, setRequierePalito] = useState(false);
+
+  const [porcentajeOperativo, setPorcentajeOperativo] = useState(15);
   const [modoAvanzadoOperativo, setModoAvanzadoOperativo] = useState(false);
 
   useEffect(() => {
@@ -41,7 +48,6 @@ export default function LaCocina({ usuario, tasaBcv }) {
         .eq('user_id', currentUserId)
         .gt('cantidad_actual', 0)
         .order('nombre', { ascending: true });
-
       if (error) throw error;
       if (data) setAlacena(data);
     } catch (error) {
@@ -67,14 +73,12 @@ export default function LaCocina({ usuario, tasaBcv }) {
     setIngredientesOlla(ingredientesOlla.filter(item => item.insumo.id !== id));
   };
 
-  // MATEMÁTICAS BIMONETARIAS CON COSTOS OCULTOS
   const costoIngredientesUsd = ingredientesOlla.reduce((acc, item) => {
     const cant = parseFloat(item.cantidadUsada.toString().replace(',', '.')) || 0;
     const costoUnitario = item.insumo.costo_usd / item.insumo.cantidad_actual;
     return acc + (costoUnitario * cant);
   }, 0);
 
-  // Calculamos el extra por gas, luz, etc.
   const montoOperativoUsd = costoIngredientesUsd * (porcentajeOperativo / 100);
   const costoTotalOllaUsd = costoIngredientesUsd + montoOperativoUsd;
   const costoTotalOllaBs = costoTotalOllaUsd * (tasaBcv || 1);
@@ -82,17 +86,47 @@ export default function LaCocina({ usuario, tasaBcv }) {
   const costoPorPorcionUsd = rendimiento > 0 ? (costoTotalOllaUsd / parseInt(rendimiento)) : 0;
   const costoPorPorcionBs = costoPorPorcionUsd * (tasaBcv || 1);
   
-  const precioSugeridoUsd = costoPorPorcionUsd * 1.30; // 30% Ganancia sobre el costo REAL
+  const precioSugeridoUsd = costoPorPorcionUsd * 1.30;
 
   useEffect(() => {
-    if (rendimiento > 0 && !precioVentaFinal) {
-      setPrecioVentaFinal(precioSugeridoUsd.toFixed(2));
+    if (rendimiento > 0 && !precioVentaUsd) {
+      const usd = precioSugeridoUsd.toFixed(2);
+      setPrecioVentaUsd(usd);
+      setPrecioVentaBs((parseFloat(usd) * (tasaBcv || 1)).toFixed(2));
     }
-  }, [rendimiento, porcentajeOperativo]); // Se recalcula si cambian el % avanzado
+  }, [rendimiento, porcentajeOperativo]);
+
+  const handleUsdChange = (value) => {
+    const raw = value.replace(',', '.');
+    setPrecioVentaUsd(value);
+    const num = parseFloat(raw);
+    if (!isNaN(num)) {
+      const tasa = tasaBcv || 1;
+      setPrecioVentaBs((num * tasa).toFixed(2));
+    } else {
+      setPrecioVentaBs('');
+    }
+  };
+
+  const handleBsChange = (value) => {
+    const raw = value.replace(',', '.');
+    setPrecioVentaBs(value);
+    const num = parseFloat(raw);
+    if (!isNaN(num)) {
+      const tasa = tasaBcv || 1;
+      if (tasa > 0) {
+        setPrecioVentaUsd((num / tasa).toFixed(2));
+      } else {
+        setPrecioVentaUsd('');
+      }
+    } else {
+      setPrecioVentaUsd('');
+    }
+  };
 
   const enviarANevera = async () => {
-    if (!nombreProducto || !rendimiento || !precioVentaFinal) {
-      alert("Por favor ponle nombre, cuántos salieron y el precio de venta.");
+    if (!nombreProducto || !rendimiento || !precioVentaUsd) {
+      addToast("Por favor ponle nombre, cuántos salieron y el precio de venta.", 'error');
       return;
     }
     
@@ -104,12 +138,21 @@ export default function LaCocina({ usuario, tasaBcv }) {
         currentUserId = session.user.id;
       }
 
-      const { error: insertError } = await supabase.from('productos').insert([{
+      const productoData = {
         user_id: currentUserId,
         nombre: nombreProducto,
-        precio_venta_usd: parseFloat(precioVentaFinal.toString().replace(',', '.')),
-        stock_actual: parseInt(rendimiento)
-      }]);
+        precio_venta_usd: parseFloat(precioVentaUsd.toString().replace(',', '.')),
+        stock_actual: parseInt(rendimiento),
+      };
+
+      // Si es congelador, añadir los campos extra
+      if (tipoPreparacion === 'congelador') {
+        productoData.temp_congelado = tempCongelado || null;
+        productoData.tiempo_congelado = tiempoCongelado || null;
+        productoData.requiere_palito = requierePalito;
+      }
+
+      const { error: insertError } = await supabase.from('productos').insert([productoData]);
       if (insertError) throw insertError;
 
       for (const item of ingredientesOlla) {
@@ -120,13 +163,18 @@ export default function LaCocina({ usuario, tasaBcv }) {
           .eq('id', item.insumo.id);
       }
 
-      setIngredientesOlla([]); setRendimiento(''); setNombreProducto(''); setPrecioVentaFinal(''); setPaso(1);
+      setIngredientesOlla([]); setRendimiento(''); setNombreProducto(''); setPrecioVentaUsd(''); setPrecioVentaBs(''); setPaso(1);
       setPorcentajeOperativo(15); setModoAvanzadoOperativo(false);
+      // Resetear campos de congelador
+      setTempCongelado('');
+      setTiempoCongelado('');
+      setRequierePalito(false);
       await cargarAlacena();
       
-      alert("¡Éxito! Postres guardados en Mi Nevera y materiales descontados de la Alacena.");
+      incrementarRacha('cocina');
+      addToast("¡Éxito! Postres guardados en Mi Nevera y materiales descontados de la Alacena.", 'success');
     } catch (error) {
-      alert("Error al guardar: " + error.message);
+      addToast("Error al guardar: " + error.message, 'error');
     } finally {
       setGuardando(false);
     }
@@ -149,10 +197,8 @@ export default function LaCocina({ usuario, tasaBcv }) {
       </div>
 
       <AnimatePresence mode="wait">
-        {/* ================= PASO 1 ================= */}
         {paso === 1 && (
           <motion.div key="paso1" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
-            
             <div className="bg-white p-2 rounded-2xl flex gap-2 shadow-sm border border-slate-100">
               <button onClick={() => setTipoPreparacion('olla')} className={`flex-1 py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${tipoPreparacion === 'olla' ? 'bg-amber-100 text-amber-700' : 'text-slate-400 bg-slate-50'}`}>
                 <Soup className="w-5 h-5"/> Mezcla / Olla
@@ -160,13 +206,15 @@ export default function LaCocina({ usuario, tasaBcv }) {
               <button onClick={() => setTipoPreparacion('bandeja')} className={`flex-1 py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${tipoPreparacion === 'bandeja' ? 'bg-orange-100 text-orange-700' : 'text-slate-400 bg-slate-50'}`}>
                 <CakeSlice className="w-5 h-5"/> Masas / Horno
               </button>
+              <button onClick={() => setTipoPreparacion('congelador')} className={`flex-1 py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${tipoPreparacion === 'congelador' ? 'bg-cyan-100 text-cyan-700' : 'text-slate-400 bg-slate-50'}`}>
+                <IceCream className="w-5 h-5"/> Congelador
+              </button>
             </div>
 
             <div className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 min-h-[200px] flex flex-col">
               <h3 className="font-black text-slate-800 flex items-center gap-2 mb-4">
-                {tipoPreparacion === 'olla' ? '🥣 Dentro de la Olla' : '🥮 En la Bandeja'}
+                {tipoPreparacion === 'olla' ? '🥣 Dentro de la Olla' : tipoPreparacion === 'bandeja' ? '🥮 En la Bandeja' : '🧊 En el Congelador'}
               </h3>
-              
               <div className="space-y-3 flex-1">
                 {ingredientesOlla.length === 0 && (
                   <div className="text-center py-8 opacity-50">
@@ -174,7 +222,6 @@ export default function LaCocina({ usuario, tasaBcv }) {
                     <p className="text-sm font-bold text-slate-400">La preparación está vacía</p>
                   </div>
                 )}
-                
                 {ingredientesOlla.map((item) => {
                   const cant = parseFloat(item.cantidadUsada.toString().replace(',', '.')) || 0;
                   const costoPielUsd = ((item.insumo.costo_usd / item.insumo.cantidad_actual) * cant);
@@ -197,7 +244,6 @@ export default function LaCocina({ usuario, tasaBcv }) {
                   );
                 })}
               </div>
-
               <button onClick={() => setMostrarSelector(true)} className="w-full mt-4 border-2 border-dashed border-amber-200 text-amber-600 bg-amber-50 py-3 rounded-2xl font-black text-sm flex items-center justify-center gap-2 active:scale-95 transition-transform">
                 <Plus className="w-5 h-5"/> AÑADIR INGREDIENTE
               </button>
@@ -215,12 +261,10 @@ export default function LaCocina({ usuario, tasaBcv }) {
           </motion.div>
         )}
 
-        {/* ================= PASO 2 ================= */}
         {paso === 2 && (
           <motion.div key="paso2" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="space-y-4">
-            
             <button onClick={() => setPaso(1)} className="flex items-center gap-2 text-sm font-black text-slate-400 mb-2 active:text-slate-600">
-              <ArrowLeft className="w-4 h-4"/> Volver a la Olla
+              <ArrowLeft className="w-4 h-4"/> Volver a la Preparación
             </button>
 
             <div className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100 space-y-5">
@@ -228,13 +272,51 @@ export default function LaCocina({ usuario, tasaBcv }) {
                 <label className="text-xs font-bold text-slate-400 uppercase ml-1">¿Qué postre preparaste?</label>
                 <input type="text" placeholder="Ej: Yogurt de Fresa 8oz" value={nombreProducto} onChange={e => setNombreProducto(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-800 px-4 py-3 rounded-2xl outline-none focus:border-amber-500 font-black mt-1" />
               </div>
-
               <div>
                 <label className="text-xs font-bold text-slate-400 uppercase ml-1">¿Cuántas unidades te salieron?</label>
                 <input type="number" placeholder="Ej: 47" value={rendimiento} onChange={e => setRendimiento(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-amber-600 px-4 py-3 rounded-2xl outline-none focus:border-amber-500 font-black text-xl mt-1" />
               </div>
 
-              {/* SECCIÓN DE COSTOS OPERATIVOS (SMART DEFAULTS) */}
+              {/* Campos adicionales SOLO para Congelador */}
+              {tipoPreparacion === 'congelador' && (
+                <div className="bg-cyan-50 p-4 rounded-2xl border border-cyan-200 space-y-3">
+                  <h4 className="text-xs font-black text-cyan-800 uppercase tracking-wider flex items-center gap-1">
+                    <IceCream className="w-3 h-3"/> Parámetros de Congelación
+                  </h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold text-cyan-700 block mb-1">Temp. de congelado</label>
+                      <input
+                        type="text"
+                        placeholder="Ej: -18°C"
+                        value={tempCongelado}
+                        onChange={e => setTempCongelado(e.target.value)}
+                        className="w-full bg-white border border-cyan-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:border-cyan-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-cyan-700 block mb-1">Tiempo de congelado</label>
+                      <input
+                        type="text"
+                        placeholder="Ej: 4 horas"
+                        value={tiempoCongelado}
+                        onChange={e => setTiempoCongelado(e.target.value)}
+                        className="w-full bg-white border border-cyan-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:border-cyan-500"
+                      />
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2 text-sm font-bold text-cyan-800">
+                    <input
+                      type="checkbox"
+                      checked={requierePalito}
+                      onChange={e => setRequierePalito(e.target.checked)}
+                      className="rounded border-cyan-300 text-cyan-600 focus:ring-cyan-500"
+                    />
+                    Requiere palito
+                  </label>
+                </div>
+              )}
+
               <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100">
                 <div className="flex justify-between items-center mb-2">
                   <label className="text-[11px] font-black text-blue-800 uppercase flex items-center gap-1"><Zap className="w-3 h-3"/> Costos Ocultos (Gas, Luz, Agua)</label>
@@ -242,7 +324,6 @@ export default function LaCocina({ usuario, tasaBcv }) {
                     {modoAvanzadoOperativo ? 'Usar Recomendado' : 'Ajuste Avanzado'}
                   </button>
                 </div>
-                
                 {!modoAvanzadoOperativo ? (
                   <div className="flex justify-between items-center bg-white border border-blue-200 p-2.5 rounded-xl shadow-sm">
                     <span className="text-xs font-bold text-slate-500">Porcentaje Sugerido</span>
@@ -261,8 +342,6 @@ export default function LaCocina({ usuario, tasaBcv }) {
 
             {rendimiento > 0 && (
               <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-slate-900 rounded-3xl p-5 shadow-xl text-white space-y-4">
-                
-                {/* DESGLOSE TRANSPARENTE */}
                 <div className="space-y-2 border-b border-slate-700 pb-3">
                   <div className="flex justify-between items-center">
                     <span className="text-slate-400 font-medium text-xs">Materia Prima:</span>
@@ -277,7 +356,6 @@ export default function LaCocina({ usuario, tasaBcv }) {
                     <span className="text-amber-400 font-black text-lg">${costoTotalOllaUsd.toFixed(2)}</span>
                   </div>
                 </div>
-
                 <div className="flex justify-between items-center">
                   <span className="text-emerald-400 font-bold text-sm">Costo Real por Unidad:</span>
                   <div className="text-right">
@@ -285,16 +363,40 @@ export default function LaCocina({ usuario, tasaBcv }) {
                     <span className="text-xs font-bold text-emerald-300/50">{costoPorPorcionBs.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs</span>
                   </div>
                 </div>
-
                 <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 mt-2">
                   <div className="flex justify-between items-center mb-3 border-b border-slate-700 pb-2">
                     <span className="text-xs font-bold text-slate-400 uppercase">Sugerido (30%+)</span>
                     <span className="text-base font-black text-slate-300">${precioSugeridoUsd.toFixed(2)}</span>
                   </div>
-                  <label className="text-xs font-black text-amber-400 uppercase block mb-1">Tu precio final de VENTA ($):</label>
-                  <input type="text" inputMode="decimal" placeholder="0.00" value={precioVentaFinal} onChange={e => setPrecioVentaFinal(e.target.value)} className="w-full bg-slate-900 border-2 border-amber-500/50 text-amber-400 px-4 py-3 rounded-xl outline-none focus:border-amber-400 font-black text-2xl text-center" />
+                  <label className="text-xs font-black text-amber-400 uppercase block mb-1">Tu precio final de VENTA</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="relative">
+                      <span className="absolute left-3 top-3 text-emerald-400 font-bold text-sm">$</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        value={precioVentaUsd}
+                        onChange={(e) => handleUsdChange(e.target.value)}
+                        className="w-full bg-slate-900 border-2 border-amber-500/50 text-amber-400 pl-8 pr-4 py-3 rounded-xl outline-none focus:border-amber-400 font-black text-xl text-center"
+                      />
+                    </div>
+                    <div className="relative">
+                      <span className="absolute left-3 top-3 text-emerald-400 font-bold text-sm">Bs</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        value={precioVentaBs}
+                        onChange={(e) => handleBsChange(e.target.value)}
+                        className="w-full bg-slate-900 border-2 border-amber-500/50 text-amber-400 pl-8 pr-4 py-3 rounded-xl outline-none focus:border-amber-400 font-black text-xl text-center"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-1 text-center">
+                    Tasa: {tasaBcv?.toFixed(2) || '---'} Bs/$
+                  </p>
                 </div>
-
                 <button onClick={enviarANevera} disabled={guardando} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black text-lg py-4 rounded-2xl shadow-lg shadow-blue-500/30 active:scale-95 transition-all flex justify-center items-center gap-2 mt-4">
                   {guardando ? <Loader2 className="w-6 h-6 animate-spin" /> : <><Store className="w-6 h-6" /> GUARDAR EN MI NEVERA</>}
                 </button>

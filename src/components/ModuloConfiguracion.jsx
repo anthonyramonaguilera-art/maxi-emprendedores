@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { Settings, Store, MessageSquare, Save, Loader2, UploadCloud, CheckCircle, CreditCard, DollarSign, RefreshCw, PenTool } from 'lucide-react';
 import { useStore } from '@nanostores/react';
 import { tasaBcvStore, actualizarTasaBcv, origenTasaStore } from '../store/configStore';
+import { addToast } from '../store/toastStore'; // ✅ NUEVO
 
 const LOGOS_PREDETERMINADOS = [
   "https://api.dicebear.com/7.x/initials/svg?seed=MX&backgroundColor=2563eb",
@@ -78,10 +79,10 @@ export default function ModuloConfiguracion({ usuario }) {
       const nuevaTasa = data.promedio;
       actualizarTasaBcv(nuevaTasa, 'oficial');
       setInputTasa(nuevaTasa.toString());
-      alert(`✅ Tasa oficial actualizada: ${nuevaTasa.toFixed(2)} Bs`);
+      addToast(`✅ Tasa oficial actualizada: ${nuevaTasa.toFixed(2)} Bs`, 'success'); // ✅ TOAST
     } catch (error) {
       console.error(error);
-      alert("❌ No se pudo obtener la tasa oficial. Revisa tu conexión.");
+      addToast("❌ No se pudo obtener la tasa oficial. Revisa tu conexión.", 'error'); // ✅ TOAST
     } finally {
       setCargandoOficial(false);
     }
@@ -91,11 +92,11 @@ export default function ModuloConfiguracion({ usuario }) {
     if (!inputTasa) return;
     const num = parseFloat(inputTasa.toString().replace(',', '.'));
     if (isNaN(num) || num <= 0) {
-      alert("Ingresa un número válido para la tasa manual");
+      addToast("Ingresa un número válido para la tasa manual", 'error'); // ✅ TOAST
       return;
     }
     actualizarTasaBcv(num, 'manual');
-    alert(`📝 Tasa manual establecida: ${num.toFixed(2)} Bs`);
+    addToast(`📝 Tasa manual establecida: ${num.toFixed(2)} Bs`, 'success'); // ✅ TOAST
   };
 
   const manejarSeleccionArchivo = (e) => {
@@ -119,7 +120,6 @@ export default function ModuloConfiguracion({ usuario }) {
     let urlFinalLogo = logoActual;
 
     try {
-      // Si el usuario ha modificado el input, lo aplicamos como manual (sobrescribe)
       if (inputTasa && parseFloat(inputTasa) !== tasaGlobal) {
         actualizarTasaBcv(inputTasa, 'manual');
       }
@@ -147,10 +147,10 @@ export default function ModuloConfiguracion({ usuario }) {
 
       if (error) throw error;
 
-      alert("¡Configuración y Tasa guardadas con éxito!");
+      addToast("¡Configuración y Tasa guardadas con éxito!", 'success'); // ✅ TOAST
       
     } catch (error) {
-      alert(error.message);
+      addToast(error.message, 'error'); // ✅ TOAST
     } finally {
       setProcesando(false);
     }
@@ -169,8 +169,6 @@ export default function ModuloConfiguracion({ usuario }) {
       </header>
 
       <form onSubmit={guardarConfiguracion} className="space-y-6">
-        
-        {/* ================= TASA BCV ================= */}
         <div className="bg-emerald-50 p-6 rounded-3xl shadow-sm border border-emerald-100">
           <h3 className="flex items-center gap-2 text-sm font-black text-emerald-800 mb-4 uppercase tracking-wider">
             <DollarSign className="w-5 h-5 text-emerald-600"/> Tasa de Cambio
@@ -187,7 +185,6 @@ export default function ModuloConfiguracion({ usuario }) {
               className="w-full px-4 py-3 outline-none text-2xl font-black text-slate-800 bg-transparent" 
             />
           </div>
-          
           <div className="flex flex-col sm:flex-row gap-3 mt-4">
             <button
               type="button"
@@ -212,7 +209,6 @@ export default function ModuloConfiguracion({ usuario }) {
           </p>
         </div>
 
-        {/* El resto del formulario (igual que antes) */}
         <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 space-y-8">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
@@ -224,9 +220,7 @@ export default function ModuloConfiguracion({ usuario }) {
               <input type="text" required placeholder="Ej: ¡Gracias por elegirnos!" value={mensajeRecibo} onChange={(e) => setMensajeRecibo(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold text-slate-700" />
             </div>
           </div>
-
           <hr className="border-slate-100" />
-
           <div>
             <h3 className="flex items-center gap-2 text-xs font-black text-slate-400 uppercase tracking-wider mb-4"><CreditCard className="w-4 h-4 text-purple-500"/> Datos de Pago Móvil</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -235,9 +229,7 @@ export default function ModuloConfiguracion({ usuario }) {
               <input type="text" placeholder="Cédula/RIF (Ej: V123...)" value={cedulaRif} onChange={(e) => setCedulaRif(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-purple-500 font-bold text-sm" />
             </div>
           </div>
-
           <hr className="border-slate-100" />
-
           <div>
             <label className="block text-xs font-black text-slate-400 uppercase tracking-wider mb-4">Logo del Negocio</label>
             <div className="flex flex-col md:flex-row gap-6 items-start">
