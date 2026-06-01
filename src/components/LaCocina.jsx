@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Soup, CakeSlice, Plus, ArrowRight, ArrowLeft, Loader2, Trash2, Store, X } from 'lucide-react';
+import { Soup, CakeSlice, Plus, ArrowRight, ArrowLeft, Loader2, Trash2, Store, X, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function LaCocina({ usuario, tasaBcv }) {
@@ -8,16 +8,18 @@ export default function LaCocina({ usuario, tasaBcv }) {
   const [cargando, setCargando] = useState(false);
   const [guardando, setGuardando] = useState(false);
   
-  // Estados del Wizard (Paso a Paso)
   const [paso, setPaso] = useState(1); 
   const [tipoPreparacion, setTipoPreparacion] = useState('olla'); 
   const [ingredientesOlla, setIngredientesOlla] = useState([]);
   const [mostrarSelector, setMostrarSelector] = useState(false);
   
-  // Estados Finales del Producto
   const [rendimiento, setRendimiento] = useState('');
   const [nombreProducto, setNombreProducto] = useState('');
   const [precioVentaFinal, setPrecioVentaFinal] = useState('');
+
+  // NUEVOS ESTADOS: Costos Operativos (Gas, Luz, Agua)
+  const [porcentajeOperativo, setPorcentajeOperativo] = useState(15); // 15% por defecto
+  const [modoAvanzadoOperativo, setModoAvanzadoOperativo] = useState(false);
 
   useEffect(() => {
     cargarAlacena();
@@ -65,27 +67,29 @@ export default function LaCocina({ usuario, tasaBcv }) {
     setIngredientesOlla(ingredientesOlla.filter(item => item.insumo.id !== id));
   };
 
-  // MATEMÁTICAS BIMONETARIAS
-  const costoTotalUsd = ingredientesOlla.reduce((acc, item) => {
+  // MATEMÁTICAS BIMONETARIAS CON COSTOS OCULTOS
+  const costoIngredientesUsd = ingredientesOlla.reduce((acc, item) => {
     const cant = parseFloat(item.cantidadUsada.toString().replace(',', '.')) || 0;
     const costoUnitario = item.insumo.costo_usd / item.insumo.cantidad_actual;
     return acc + (costoUnitario * cant);
   }, 0);
-  const costoTotalBs = costoTotalUsd * (tasaBcv || 1);
 
-  const costoPorPorcionUsd = rendimiento > 0 ? (costoTotalUsd / parseInt(rendimiento)) : 0;
+  // Calculamos el extra por gas, luz, etc.
+  const montoOperativoUsd = costoIngredientesUsd * (porcentajeOperativo / 100);
+  const costoTotalOllaUsd = costoIngredientesUsd + montoOperativoUsd;
+  const costoTotalOllaBs = costoTotalOllaUsd * (tasaBcv || 1);
+
+  const costoPorPorcionUsd = rendimiento > 0 ? (costoTotalOllaUsd / parseInt(rendimiento)) : 0;
   const costoPorPorcionBs = costoPorPorcionUsd * (tasaBcv || 1);
   
-  const precioSugeridoUsd = costoPorPorcionUsd * 1.30; 
+  const precioSugeridoUsd = costoPorPorcionUsd * 1.30; // 30% Ganancia sobre el costo REAL
 
-  // Auto-llenar el precio de venta sugerido cuando ponen el rendimiento
   useEffect(() => {
     if (rendimiento > 0 && !precioVentaFinal) {
       setPrecioVentaFinal(precioSugeridoUsd.toFixed(2));
     }
-  }, [rendimiento]);
+  }, [rendimiento, porcentajeOperativo]); // Se recalcula si cambian el % avanzado
 
-  // LA MAGIA DE GUARDAR Y DESCONTAR INVENTARIO
   const enviarANevera = async () => {
     if (!nombreProducto || !rendimiento || !precioVentaFinal) {
       alert("Por favor ponle nombre, cuántos salieron y el precio de venta.");
@@ -100,7 +104,6 @@ export default function LaCocina({ usuario, tasaBcv }) {
         currentUserId = session.user.id;
       }
 
-      // 1. Guardar el producto final en la tabla 'productos' (Mi Nevera)
       const { error: insertError } = await supabase.from('productos').insert([{
         user_id: currentUserId,
         nombre: nombreProducto,
@@ -109,26 +112,19 @@ export default function LaCocina({ usuario, tasaBcv }) {
       }]);
       if (insertError) throw insertError;
 
-      // 2. Descontar los ingredientes usados de la tabla 'insumos' (Mi Alacena)
       for (const item of ingredientesOlla) {
         const cantUsada = parseFloat(item.cantidadUsada.toString().replace(',', '.')) || 0;
         const stockRestante = item.insumo.cantidad_actual - cantUsada;
-        
         await supabase.from('insumos')
           .update({ cantidad_actual: stockRestante > 0 ? stockRestante : 0 })
           .eq('id', item.insumo.id);
       }
 
-      // 3. Resetear la cocina para la próxima receta
-      setIngredientesOlla([]);
-      setRendimiento('');
-      setNombreProducto('');
-      setPrecioVentaFinal('');
-      setPaso(1);
-      await cargarAlacena(); // Recargar alacena con saldos nuevos
+      setIngredientesOlla([]); setRendimiento(''); setNombreProducto(''); setPrecioVentaFinal(''); setPaso(1);
+      setPorcentajeOperativo(15); setModoAvanzadoOperativo(false);
+      await cargarAlacena();
       
       alert("¡Éxito! Postres guardados en Mi Nevera y materiales descontados de la Alacena.");
-      
     } catch (error) {
       alert("Error al guardar: " + error.message);
     } finally {
@@ -153,7 +149,7 @@ export default function LaCocina({ usuario, tasaBcv }) {
       </div>
 
       <AnimatePresence mode="wait">
-        {/* ================= PASO 1: AGREGAR INGREDIENTES ================= */}
+        {/* ================= PASO 1 ================= */}
         {paso === 1 && (
           <motion.div key="paso1" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
             
@@ -207,7 +203,7 @@ export default function LaCocina({ usuario, tasaBcv }) {
               </button>
             </div>
 
-            {ingredientesOlla.length > 0 && costoTotalUsd > 0 && (
+            {ingredientesOlla.length > 0 && costoIngredientesUsd > 0 && (
               <motion.button 
                 initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
                 onClick={() => setPaso(2)}
@@ -219,7 +215,7 @@ export default function LaCocina({ usuario, tasaBcv }) {
           </motion.div>
         )}
 
-        {/* ================= PASO 2: RENDIMIENTO Y GUARDADO ================= */}
+        {/* ================= PASO 2 ================= */}
         {paso === 2 && (
           <motion.div key="paso2" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="space-y-4">
             
@@ -237,20 +233,53 @@ export default function LaCocina({ usuario, tasaBcv }) {
                 <label className="text-xs font-bold text-slate-400 uppercase ml-1">¿Cuántas unidades te salieron?</label>
                 <input type="number" placeholder="Ej: 47" value={rendimiento} onChange={e => setRendimiento(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-amber-600 px-4 py-3 rounded-2xl outline-none focus:border-amber-500 font-black text-xl mt-1" />
               </div>
+
+              {/* SECCIÓN DE COSTOS OPERATIVOS (SMART DEFAULTS) */}
+              <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100">
+                <div className="flex justify-between items-center mb-2">
+                  <label className="text-[11px] font-black text-blue-800 uppercase flex items-center gap-1"><Zap className="w-3 h-3"/> Costos Ocultos (Gas, Luz, Agua)</label>
+                  <button onClick={() => setModoAvanzadoOperativo(!modoAvanzadoOperativo)} className="text-[10px] font-black text-blue-500 uppercase underline active:text-blue-700">
+                    {modoAvanzadoOperativo ? 'Usar Recomendado' : 'Ajuste Avanzado'}
+                  </button>
+                </div>
+                
+                {!modoAvanzadoOperativo ? (
+                  <div className="flex justify-between items-center bg-white border border-blue-200 p-2.5 rounded-xl shadow-sm">
+                    <span className="text-xs font-bold text-slate-500">Porcentaje Sugerido</span>
+                    <span className="bg-blue-100 text-blue-700 font-black text-xs px-2 py-1 rounded-md">15%</span>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <input type="number" value={porcentajeOperativo} onChange={(e) => setPorcentajeOperativo(e.target.value)} className="w-full bg-white border border-blue-200 text-blue-700 px-4 py-2.5 rounded-xl outline-none focus:border-blue-500 font-black text-sm" />
+                      <span className="absolute right-3 top-3 text-slate-400 font-black text-sm">%</span>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {rendimiento > 0 && (
               <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-slate-900 rounded-3xl p-5 shadow-xl text-white space-y-4">
-                <div className="flex justify-between items-center border-b border-slate-700 pb-3">
-                  <span className="text-slate-400 font-bold text-sm">Costo de la olla:</span>
-                  <div className="text-right">
-                    <span className="block text-xl font-black leading-none">${costoTotalUsd.toFixed(2)}</span>
-                    <span className="text-[10px] text-slate-400 font-bold">{costoTotalBs.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs</span>
+                
+                {/* DESGLOSE TRANSPARENTE */}
+                <div className="space-y-2 border-b border-slate-700 pb-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400 font-medium text-xs">Materia Prima:</span>
+                    <span className="text-slate-300 font-bold text-sm">${costoIngredientesUsd.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400 font-medium text-xs">Extras (Gas, Luz, etc):</span>
+                    <span className="text-slate-300 font-bold text-sm">+ ${montoOperativoUsd.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between items-center pt-2 mt-2 border-t border-slate-800">
+                    <span className="text-slate-200 font-black text-sm">COSTO TOTAL RECETA:</span>
+                    <span className="text-amber-400 font-black text-lg">${costoTotalOllaUsd.toFixed(2)}</span>
                   </div>
                 </div>
 
                 <div className="flex justify-between items-center">
-                  <span className="text-emerald-400 font-bold text-sm">Costo Exacto Unidad:</span>
+                  <span className="text-emerald-400 font-bold text-sm">Costo Real por Unidad:</span>
                   <div className="text-right">
                     <span className="block text-3xl font-black text-white leading-none">${costoPorPorcionUsd.toFixed(2)}</span>
                     <span className="text-xs font-bold text-emerald-300/50">{costoPorPorcionBs.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs</span>
@@ -275,7 +304,6 @@ export default function LaCocina({ usuario, tasaBcv }) {
         )}
       </AnimatePresence>
 
-      {/* SELECTOR DE INGREDIENTES CON Z-INDEX ALTO PARA TAPAR MENU INFERIOR */}
       <AnimatePresence>
         {mostrarSelector && (
           <>
