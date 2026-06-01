@@ -65,7 +65,6 @@ export default function MisCuentas({ usuario, tasaBcv }) {
     }
   };
 
-  // MATEMÁTICAS A PRUEBA DE BALAS (Evitamos NaN)
   const totalCajaUsd = ventas.reduce((acc, v) => acc + (parseFloat(v.total_usd) || 0), 0);
   const totalCajaBs = totalCajaUsd * (tasaBcv || 1);
 
@@ -93,10 +92,10 @@ export default function MisCuentas({ usuario, tasaBcv }) {
         currentUserId = session.user.id;
       }
 
-     const montoLimpio = parseFloat(montoFiadoUsd.toString().replace(',', '.'));
+      const montoLimpio = parseFloat(montoFiadoUsd.toString().replace(',', '.'));
       if (isNaN(montoLimpio)) throw new Error("Monto inválido. Usa números.");
 
-      // Creamos una fecha por defecto: Hoy + 7 días
+      // CREACIÓN DE FECHA POR DEFECTO Y MANTENIMIENTO DE TODOS LOS CAMPOS REQUERIDOS POR LA BD
       const fechaVencimientoDefault = new Date();
       fechaVencimientoDefault.setDate(fechaVencimientoDefault.getDate() + 7);
 
@@ -104,8 +103,8 @@ export default function MisCuentas({ usuario, tasaBcv }) {
         user_id: currentUserId,
         cliente: clienteFiado.trim(),
         monto_usd: montoLimpio,
-        monto_total: montoLimpio, // Salvavidas 1
-        fecha_vencimiento: fechaVencimientoDefault.toISOString(), // <-- SALVAVIDAS 2
+        monto_total: montoLimpio, // Protege contra error de BD
+        fecha_vencimiento: fechaVencimientoDefault.toISOString(), // Protege contra error de BD
         descripcion: descripcionFiado || 'Anotación manual'
       }]);
 
@@ -158,7 +157,6 @@ export default function MisCuentas({ usuario, tasaBcv }) {
             ) : (
               <div className="space-y-3">
                 {ventas.slice(0, 10).map(v => {
-                  // RENDERIZADO SEGURO DE FECHA
                   const rawDate = v.created_at || v.fecha_creacion;
                   const fechaFormateada = rawDate 
                     ? new Date(rawDate).toLocaleDateString('es-VE', { year: 'numeric', month: 'short', day: 'numeric' }) 

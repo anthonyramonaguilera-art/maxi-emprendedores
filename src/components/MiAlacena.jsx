@@ -1,29 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Archive, Plus, Trash2, X, Loader2, PackageOpen, ChevronDown, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, Edit2, Package, Loader2, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function MiAlacena({ usuario, tasaBcv }) {
   const [insumos, setInsumos] = useState([]);
-  const [cargando, setCargando] = useState(false); 
-  const [mostrarFormulario, setMostrarFormulario] = useState(false);
+  const [cargando, setCargando] = useState(true);
+  const [mostrarModal, setMostrarModal] = useState(false);
+  const [modoEdicion, setModoEdicion] = useState(null); // { id, nombre, cantidad, unidad, costo_total }
   const [guardando, setGuardando] = useState(false);
 
+  // Formulario (nuevo o edición)
   const [nombre, setNombre] = useState('');
-  const [costoUsd, setCostoUsd] = useState('');
-  const [costoBs, setCostoBs] = useState('');
   const [cantidad, setCantidad] = useState('');
-  const [unidadMedida, setUnidadMedida] = useState('Bolsas/Paquetes');
+  const [unidad, setUnidad] = useState('kg');
+  const [costoTotal, setCostoTotal] = useState('');
 
-  const unidadesSugeridas = ['Bolsas/Paquetes', 'Kilos/Gramos', 'Litros/Ml', 'Unidades (Vasos/Tapas)', 'Cucharadas'];
-
-  // CORRECCIÓN 1: Forzamos la carga siempre que el componente se monte o cambie el usuario
   useEffect(() => {
-    cargarAlacena();
+    cargarInsumos();
   }, [usuario]);
 
-  const cargarAlacena = async () => {
-    // Buscamos el usuario de forma agresiva por si React se durmió
+  const cargarInsumos = async () => {
     let currentUserId = usuario?.id;
     if (!currentUserId) {
       const { data: { session } } = await supabase.auth.getSession();
@@ -38,101 +35,96 @@ export default function MiAlacena({ usuario, tasaBcv }) {
         .select('*')
         .eq('user_id', currentUserId)
         .order('nombre', { ascending: true });
-      
       if (error) throw error;
-      if (data) setInsumos(data);
+      setInsumos(data || []);
     } catch (error) {
-      console.error("Error cargando alacena:", error);
+      console.error(error);
     } finally {
       setCargando(false);
     }
   };
 
-  const handleUsdChange = (valor) => {
-    const valorLimpio = valor.replace(',', '.');
-    setCostoUsd(valorLimpio);
-    if (valorLimpio && tasaBcv) {
-      setCostoBs((parseFloat(valorLimpio) * tasaBcv).toFixed(2));
-    } else {
-      setCostoBs('');
-    }
+  const abrirModalNuevo = () => {
+    setModoEdicion(null);
+    setNombre('');
+    setCantidad('');
+    setUnidad('kg');
+    setCostoTotal('');
+    setMostrarModal(true);
   };
 
-  const handleBsChange = (valor) => {
-    const valorLimpio = valor.replace(',', '.');
-    setCostoBs(valorLimpio);
-    if (valorLimpio && tasaBcv) {
-      setCostoUsd((parseFloat(valorLimpio) / tasaBcv).toFixed(2));
-    } else {
-      setCostoUsd('');
-    }
+  const abrirModalEditar = (insumo) => {
+    setModoEdicion({
+      id: insumo.id,
+      nombre: insumo.nombre,
+      cantidad: insumo.cantidad_actual.toString(),
+      unidad: insumo.unidad_medida,
+      costo_total: insumo.costo_usd.toString()
+    });
+    setNombre(insumo.nombre);
+    setCantidad(insumo.cantidad_actual.toString());
+    setUnidad(insumo.unidad_medida);
+    setCostoTotal(insumo.costo_usd.toString());
+    setMostrarModal(true);
   };
 
-  // CORRECCIÓN 2: Lógica de Consolidación (Merge de productos)
   const guardarInsumo = async (e) => {
     e.preventDefault();
-    if (!nombre || !costoUsd || !cantidad) return;
-    setGuardando(true);
+    if (!nombre || !cantidad || !costoTotal) return;
 
+    setGuardando(true);
     try {
       let currentUserId = usuario?.id;
       if (!currentUserId) {
-        const { data: { session }, error: authError } = await supabase.auth.getSession();
-        if (authError || !session) throw new Error("Sesión no encontrada.");
+        const { data: { session } } = await supabase.auth.getSession();
         currentUserId = session.user.id;
       }
 
-      const costoLimpio = parseFloat(costoUsd.toString().replace(',', '.'));
-      const cantidadLimpia = parseFloat(cantidad.toString().replace(',', '.'));
-      const nombreLimpio = nombre.trim();
+      const cantidadNum = parseFloat(cantidad.toString().replace(',', '.'));
+      const costoNum = parseFloat(costoTotal.toString().replace(',', '.'));
 
-      // Buscamos si ya existe el mismo nombre con la misma unidad de medida
-      const { data: existente, error: searchError } = await supabase
-        .from('insumos')
-        .select('*')
-        .eq('user_id', currentUserId)
-        .ilike('nombre', nombreLimpio) // Busca ignorando mayúsculas/minúsculas
-        .eq('unidad_medida', unidadMedida)
-        .maybeSingle(); // maybeSingle evita que colapse si no hay resultados
-
-      if (searchError) throw searchError;
-
-      if (existente) {
-        // SI EXISTE: Le sumamos la cantidad y el costo al producto viejo
-        const { error: updateError } = await supabase
+      if (modoEdicion) {
+        // Actualizar
+        const { error } = await supabase
           .from('insumos')
           .update({
-            cantidad_actual: existente.cantidad_actual + cantidadLimpia,
-            costo_usd: existente.costo_usd + costoLimpio
+            nombre: nombre.trim(),
+            cantidad_actual: cantidadNum,
+            unidad_medida: unidad,
+            costo_usd: costoNum
           })
-          .eq('id', existente.id);
-        if (updateError) throw updateError;
+          .eq('id', modoEdicion.id);
+        if (error) throw error;
       } else {
-        // SI ES NUEVO: Lo creamos desde cero
-        const { error: insertError } = await supabase.from('insumos').insert([{
+        // Insertar nuevo
+        const { error } = await supabase.from('insumos').insert([{
           user_id: currentUserId,
-          nombre: nombreLimpio,
-          costo_usd: costoLimpio,
-          cantidad_actual: cantidadLimpia,
-          unidad_medida: unidadMedida
+          nombre: nombre.trim(),
+          cantidad_actual: cantidadNum,
+          unidad_medida: unidad,
+          costo_usd: costoNum
         }]);
-        if (insertError) throw insertError;
+        if (error) throw error;
       }
-      
-      setNombre(''); setCostoUsd(''); setCostoBs(''); setCantidad('');
-      setMostrarFormulario(false);
-      await cargarAlacena();
+
+      setNombre('');
+      setCantidad('');
+      setUnidad('kg');
+      setCostoTotal('');
+      setMostrarModal(false);
+      setModoEdicion(null);
+      await cargarInsumos();
     } catch (error) {
-      alert("Error al guardar: " + error.message);
+      alert('Error al guardar: ' + error.message);
     } finally {
       setGuardando(false);
     }
   };
 
   const eliminarInsumo = async (id) => {
-    if(window.confirm("¿Sacar este material de la alacena?")) {
+    if (window.confirm('¿Eliminar este insumo?')) {
       await supabase.from('insumos').delete().eq('id', id);
-      cargarAlacena();
+      await cargarInsumos();
     }
   };
 
@@ -142,104 +134,143 @@ export default function MiAlacena({ usuario, tasaBcv }) {
 
   return (
     <div className="space-y-4 font-sans pb-24">
-      <div className="bg-emerald-50 rounded-3xl p-4 shadow-sm flex items-center gap-3 border border-emerald-100 relative">
-        <div className="text-3xl animate-pulse">👷🏻‍♂️</div>
-        <div className="flex-1">
-          <p className="text-xs font-black uppercase tracking-widest text-emerald-600">Maxi Inventario</p>
-          <p className="text-sm font-bold text-slate-700 leading-tight mt-0.5">
-            {insumos.length === 0 
-              ? "¡Alacena limpia! Añade lo que compraste en el súper tocando el botón verde." 
-              : "Aquí está tu materia prima. Todo listo para ir a La Cocina."}
-          </p>
+      {/* Header */}
+      <div className="bg-emerald-50 rounded-3xl p-4 shadow-sm flex items-center gap-3 border border-emerald-100">
+        <Package className="w-8 h-8 text-emerald-600" />
+        <div>
+          <h2 className="font-black text-slate-800">Mi Alacena</h2>
+          <p className="text-xs text-slate-500">Materia prima disponible</p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3">
+      {/* Lista */}
+      <div className="space-y-3">
         {insumos.length === 0 ? (
-          <div className="text-center py-16 bg-white rounded-3xl border border-dashed border-slate-200">
-            <PackageOpen className="w-12 h-12 text-slate-300 mx-auto mb-2" />
-            <p className="text-slate-400 font-bold text-sm">No hay ingredientes registrados</p>
+          <div className="bg-white rounded-3xl p-8 text-center border border-dashed border-slate-200">
+            <Package className="w-12 h-12 mx-auto text-slate-300 mb-2" />
+            <p className="text-slate-400 font-medium">Tu alacena está vacía</p>
+            <p className="text-xs text-slate-400 mt-1">Toca el botón + para agregar insumos</p>
           </div>
         ) : (
-          insumos.map((item) => (
-            <motion.div 
-              initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-              key={item.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex justify-between items-center"
-            >
-              <div className="flex-1">
-                <h3 className="font-black text-slate-800">{item.nombre}</h3>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="bg-emerald-100 text-emerald-700 text-xs font-black px-2 py-0.5 rounded-md">
-                    {item.cantidad_actual} {item.unidad_medida}
-                  </span>
+          insumos.map((insumo) => {
+            const costoUnitarioUsd = insumo.costo_usd / insumo.cantidad_actual;
+            const costoUnitarioBs = costoUnitarioUsd * (tasaBcv || 1);
+            return (
+              <div key={insumo.id} className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 flex items-center justify-between">
+                <div className="flex-1">
+                  <h3 className="font-black text-slate-800">{insumo.nombre}</h3>
+                  <div className="flex gap-3 mt-1 flex-wrap">
+                    <span className="text-xs font-bold text-slate-400">{insumo.cantidad_actual} {insumo.unidad_medida}</span>
+                    <span className="text-xs font-bold text-emerald-600">${costoUnitarioUsd.toFixed(2)} / unidad</span>
+                    <span className="text-[10px] font-bold text-slate-400">{costoUnitarioBs.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs</span>
+                  </div>
+                </div>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => abrirModalEditar(insumo)}
+                    className="p-2 text-blue-500 hover:bg-blue-50 rounded-xl active:scale-90 transition-all"
+                    title="Editar"
+                  >
+                    <Edit2 className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={() => eliminarInsumo(insumo.id)}
+                    className="p-2 text-slate-400 hover:text-red-500 rounded-xl active:scale-90 transition-all"
+                    title="Eliminar"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
                 </div>
               </div>
-              
-              <div className="text-right mr-3">
-                <span className="block font-black text-emerald-600 leading-none">${item.costo_usd.toFixed(2)}</span>
-                <span className="text-[10px] font-bold text-slate-400">{(item.costo_usd * (tasaBcv || 1)).toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs</span>
-              </div>
-
-              <button onClick={() => eliminarInsumo(item.id)} className="w-10 h-10 bg-red-50 text-red-400 rounded-xl flex items-center justify-center active:scale-90 transition-transform">
-                <Trash2 className="w-5 h-5" />
-              </button>
-            </motion.div>
-          ))
+            );
+          })
         )}
       </div>
 
-      <button onClick={() => setMostrarFormulario(true)} className="fixed bottom-20 right-4 w-14 h-14 bg-emerald-500 text-white rounded-full shadow-lg shadow-emerald-200 flex items-center justify-center active:scale-95 transition-transform z-30">
+      {/* Botón flotante + (corregido) */}
+      <button
+        onClick={abrirModalNuevo}
+        className="fixed bottom-20 left-1/2 -translate-x-1/2 w-14 h-14 bg-emerald-500 text-white rounded-full shadow-lg shadow-emerald-200 flex items-center justify-center active:scale-95 transition-transform z-30"
+        style={{ left: 'calc(50% + 120px)' }}
+      >
         <Plus className="w-8 h-8" />
       </button>
 
+      {/* Modal (crear o editar) */}
       <AnimatePresence>
-        {mostrarFormulario && (
+        {mostrarModal && (
           <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-slate-900/60 z-[60] max-w-md mx-auto backdrop-blur-sm" onClick={() => setMostrarFormulario(false)} />
-            <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 250 }} className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[2.5rem] shadow-[0_-10px_40px_rgba(0,0,0,0.2)] z-[70] p-6 pb-8 max-h-[90vh] overflow-y-auto flex flex-col">
-              <div className="flex justify-between items-center mb-4 shrink-0">
-                <h3 className="font-black text-xl text-slate-800">Nueva Compra</h3>
-                <button onClick={() => setMostrarFormulario(false)} className="bg-slate-100 p-2 rounded-full text-slate-500 active:scale-90 transition-transform"><X className="w-5 h-5"/></button>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-slate-900/60 z-[60] max-w-md mx-auto backdrop-blur-sm"
+              onClick={() => setMostrarModal(false)}
+            />
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 250 }}
+              className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[2.5rem] shadow-2xl z-[70] p-6 pb-8"
+            >
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="font-black text-xl text-slate-800">
+                  {modoEdicion ? '✏️ Editar Insumo' : '➕ Nuevo Insumo'}
+                </h3>
+                <button onClick={() => setMostrarModal(false)} className="bg-slate-100 p-2 rounded-full">
+                  <X className="w-5 h-5" />
+                </button>
               </div>
-
-              <form onSubmit={guardarInsumo} className="space-y-4 shrink-0">
-                <div>
-                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">¿Qué compraste?</label>
-                  <input type="text" required placeholder="Ej: Leche Upaca, Vasos 67..." value={nombre} onChange={e => setNombre(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-800 px-4 py-3 rounded-2xl outline-none focus:border-emerald-500 font-bold mt-1" />
+              <form onSubmit={guardarInsumo} className="space-y-4">
+                <input
+                  type="text"
+                  placeholder="Nombre (ej: Harina Pan)"
+                  value={nombre}
+                  onChange={(e) => setNombre(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-emerald-500"
+                  required
+                />
+                <div className="flex gap-3">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="Cantidad"
+                    value={cantidad}
+                    onChange={(e) => setCantidad(e.target.value)}
+                    className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-emerald-500"
+                    required
+                  />
+                  <select
+                    value={unidad}
+                    onChange={(e) => setUnidad(e.target.value)}
+                    className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 outline-none focus:border-emerald-500 font-bold"
+                  >
+                    <option value="kg">kg</option>
+                    <option value="g">g</option>
+                    <option value="l">l</option>
+                    <option value="ml">ml</option>
+                    <option value="unidad">unidad</option>
+                  </select>
                 </div>
-                
-                <div className="bg-emerald-50/50 border border-emerald-100 p-3 rounded-2xl">
-                  <label className="text-xs font-black text-emerald-600 uppercase mb-2 flex items-center gap-1"><RefreshCw className="w-3 h-3" /> Costo Total (Llena solo uno)</label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="relative">
-                      <span className="absolute left-3 top-3.5 text-slate-400 font-black">$</span>
-                      <input type="text" inputMode="decimal" required placeholder="0.00" value={costoUsd} onChange={e => handleUsdChange(e.target.value)} className="w-full bg-white border border-slate-200 text-slate-800 pl-8 pr-3 py-3 rounded-xl outline-none focus:border-emerald-500 font-black" />
-                    </div>
-                    <div className="relative">
-                      <span className="absolute left-3 top-3.5 text-slate-400 font-black">Bs</span>
-                      <input type="text" inputMode="decimal" required placeholder="0.00" value={costoBs} onChange={e => handleBsChange(e.target.value)} className="w-full bg-white border border-slate-200 text-slate-800 pl-9 pr-3 py-3 rounded-xl outline-none focus:border-emerald-500 font-black" />
-                    </div>
-                  </div>
+                <div className="relative">
+                  <span className="absolute left-3 top-3 text-slate-400 font-bold">$</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="Costo total que pagaste"
+                    value={costoTotal}
+                    onChange={(e) => setCostoTotal(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-4 py-3 outline-none focus:border-emerald-500"
+                    required
+                  />
                 </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs font-bold text-slate-400 uppercase ml-1">¿Cuánto trae?</label>
-                    <input type="text" inputMode="decimal" required placeholder="Ej: 1, 900, 400" value={cantidad} onChange={e => setCantidad(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-800 px-4 py-3 rounded-2xl outline-none focus:border-emerald-500 font-black mt-1" />
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-slate-400 uppercase ml-1">¿En qué se mide?</label>
-                    <div className="relative mt-1">
-                      <select value={unidadMedida} onChange={e => setUnidadMedida(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-800 px-4 py-3 rounded-2xl outline-none focus:border-emerald-500 font-bold appearance-none">
-                        {unidadesSugeridas.map(u => <option key={u} value={u}>{u}</option>)}
-                      </select>
-                      <ChevronDown className="absolute right-4 top-3.5 w-5 h-5 text-slate-400 pointer-events-none" />
-                    </div>
-                  </div>
-                </div>
-
-                <button type="submit" disabled={guardando} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black text-lg py-4 rounded-2xl mt-4 shadow-lg shadow-emerald-200 active:scale-[0.98] transition-all flex justify-center">
-                  {guardando ? <Loader2 className="w-6 h-6 animate-spin" /> : "GUARDAR EN ALACENA"}
+                <button
+                  type="submit"
+                  disabled={guardando}
+                  className="w-full bg-emerald-500 text-white font-black py-4 rounded-xl active:scale-95 transition-all"
+                >
+                  {guardando ? <Loader2 className="w-6 h-6 animate-spin mx-auto" /> : (modoEdicion ? 'ACTUALIZAR' : 'AGREGAR')}
                 </button>
               </form>
             </motion.div>

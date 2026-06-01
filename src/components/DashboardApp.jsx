@@ -1,68 +1,93 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { 
-  Archive, 
-  Soup, 
-  Store, 
-  LogOut, 
-  Coins,
-  Loader2
-} from 'lucide-react';
+import { Archive, Soup, Store, LogOut, Coins, Loader2, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 // --- CONEXIÓN AL CEREBRO GLOBAL ---
 import { useStore } from '@nanostores/react';
-import { tasaBcvStore, actualizarTasaBcv } from '../store/configStore';
+import { tasaBcvStore, actualizarTasaBcv, origenTasaStore } from '../store/configStore';
 
 // Componentes
 import MiAlacena from './MiAlacena';
 import LaCocina from './LaCocina';
 import MiNevera from './MiNevera';
 import MisCuentas from './MisCuentas';
-import ModuloConfiguracion from './ModuloConfiguracion'; // <-- Agregado
+import ModuloConfiguracion from './ModuloConfiguracion';
 
 export default function DashboardApp({ usuario }) {
   const [tabActiva, setTabActiva] = useState('nevera'); 
   const [perfil, setPerfil] = useState(null);
+  
+  // Estado para garantizar usuario antes de renderizar pestañas
+  const [usuarioValidado, setUsuarioValidado] = useState(null);
   const [cargando, setCargando] = useState(true);
 
-  // Escuchamos la tasa global desde nanostores
   const tasaBcvGlobal = useStore(tasaBcvStore);
+  const origenTasa = useStore(origenTasaStore);
 
   useEffect(() => {
-    const inicializarApp = async () => {
-      // Solo buscamos de internet si la usuaria NO ha puesto una tasa manual (es decir, si es 0)
-      try {
-        if (tasaBcvGlobal === 0) {
-          const resTasa = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
-          const dataTasa = await resTasa.json();
-          actualizarTasaBcv(dataTasa.promedio);
-        }
-      } catch (e) { 
-        if (tasaBcvGlobal === 0) actualizarTasaBcv(51.20); 
-      }
+    let montado = true;
 
-      if (usuario?.id) {
-        const { data } = await supabase
+    const inicializarApp = async () => {
+      try {
+        // 1. Buscamos la Tasa BCV (si no está definida)
+        if (tasaBcvStore.get() === 0) {
+          fetch('https://ve.dolarapi.com/v1/dolares/oficial')
+            .then(res => res.json())
+            .then(data => actualizarTasaBcv(data.promedio, 'oficial'))
+            .catch(() => actualizarTasaBcv(51.20, 'manual'));
+        }
+
+        // 2. RECUPERACIÓN DE SESIÓN BLINDADA
+        let currentUser = usuario;
+        
+        if (!currentUser || !currentUser.id) {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session?.user) {
+            currentUser = session.user;
+          }
+        }
+
+        if (!currentUser || !currentUser.id) {
+          window.location.href = '/login';
+          return;
+        }
+
+        if (montado) {
+          setUsuarioValidado(currentUser);
+        }
+
+        // 3. Buscar Perfil
+        const { data, error } = await supabase
           .from('perfiles')
           .select('*')
-          .eq('user_id', usuario.id)
-          .single();
-        if (data) setPerfil(data);
+          .eq('user_id', currentUser.id)
+          .maybeSingle(); 
+
+        if (data && montado) setPerfil(data);
+
+      } catch (err) {
+        console.error("Error de inicialización:", err);
+      } finally {
+        if (montado) {
+          setCargando(false);
+        }
       }
-      setCargando(false);
     };
+
     inicializarApp();
-  }, [usuario, tasaBcvGlobal]);
+
+    return () => { montado = false; };
+  }, [usuario]); 
 
   const cerrarSesion = async () => {
     await supabase.auth.signOut();
     window.location.href = '/login';
   };
 
-  if (cargando) {
+  if (cargando || !usuarioValidado) {
     return (
-      <div className="fixed inset-0 bg-slate-50 flex flex-col justify-center items-center">
+      <div className="fixed inset-0 bg-slate-50 flex flex-col justify-center items-center z-[100]">
         <Loader2 className="w-12 h-12 animate-spin text-blue-600 mb-2" />
         <p className="text-slate-500 font-bold font-sans">Abriendo Maxi Emprendedores...</p>
       </div>
@@ -94,47 +119,38 @@ export default function DashboardApp({ usuario }) {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Indicador de Tasa BCV (Ahora conectado al cerebro global) */}
+            {/* Indicador de Tasa con origen */}
             <div className="bg-amber-50 border border-amber-200/60 px-2.5 py-1 rounded-xl text-right">
-              <p className="text-[9px] font-bold text-amber-600 uppercase leading-none">Tasa BCV</p>
-              <p className="text-xs font-black text-amber-700 mt-0.5">{tasaBcvGlobal > 0 ? tasaBcvGlobal.toFixed(2) : '---'} Bs</p>
+              <p className="text-[9px] font-bold text-amber-600 uppercase leading-none">
+                {origenTasa === 'oficial' ? 'Tasa BCV' : 'Tasa Manual'}
+              </p>
+              <p className="text-xs font-black text-amber-700 mt-0.5">
+                {tasaBcvGlobal > 0 ? tasaBcvGlobal.toFixed(2) : '---'} Bs
+              </p>
             </div>
             
-            <button 
-              onClick={cerrarSesion} 
-              className="p-2 text-slate-400 hover:text-red-500 rounded-xl hover:bg-red-50 transition-colors"
-              title="Salir del sistema"
-            >
+            <button onClick={cerrarSesion} className="p-2 text-slate-400 hover:text-red-500 rounded-xl hover:bg-red-50 transition-colors" title="Salir">
               <LogOut className="w-5 h-5" />
             </button>
             
-            {/* CORRECCIÓN: Botón de Configuración con el state correcto */}
             <button 
               onClick={() => setTabActiva('configuracion')} 
               className={`p-2 rounded-full transition-transform active:scale-90 ${tabActiva === 'configuracion' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+              <Settings className="w-5 h-5"/>
             </button>
           </div>
         </header>
 
-        {/* CONTENEDOR DE PANTALLAS DINÁMICAS */}
+        {/* ZONA DE JUEGO (PANTALLAS) - Pasamos usuarioValidado a todas */}
         <main className="flex-1 p-4 overflow-y-auto">
           <AnimatePresence mode="wait">
-            <motion.div
-              key={tabActiva}
-              initial={{ opacity: 0, x: 15 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -15 }}
-              transition={{ duration: 0.15 }}
-              className="h-full"
-            >
-              {/* Le pasamos la tasa global a todos los hijos */}
-              {tabActiva === 'alacena' && <MiAlacena usuario={usuario} tasaBcv={tasaBcvGlobal} />}
-              {tabActiva === 'cocina' && <LaCocina usuario={usuario} tasaBcv={tasaBcvGlobal} />}
-              {tabActiva === 'nevera' && <MiNevera usuario={usuario} tasaBcv={tasaBcvGlobal} />}
-              {tabActiva === 'cuentas' && <MisCuentas usuario={usuario} tasaBcv={tasaBcvGlobal} />}
-              {tabActiva === 'configuracion' && <ModuloConfiguracion usuario={usuario} />}
+            <motion.div key={tabActiva} initial={{ opacity: 0, x: 15 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -15 }} transition={{ duration: 0.15 }} className="h-full">
+              {tabActiva === 'alacena' && <MiAlacena usuario={usuarioValidado} tasaBcv={tasaBcvGlobal} />}
+              {tabActiva === 'cocina' && <LaCocina usuario={usuarioValidado} tasaBcv={tasaBcvGlobal} />}
+              {tabActiva === 'nevera' && <MiNevera usuario={usuarioValidado} tasaBcv={tasaBcvGlobal} />}
+              {tabActiva === 'cuentas' && <MisCuentas usuario={usuarioValidado} tasaBcv={tasaBcvGlobal} />}
+              {tabActiva === 'configuracion' && <ModuloConfiguracion usuario={usuarioValidado} />}
             </motion.div>
           </AnimatePresence>
         </main>
