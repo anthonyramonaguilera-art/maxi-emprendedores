@@ -1,31 +1,41 @@
-import React, { useState, useEffect } from 'react';
-import { supabase } from '../lib/supabase';
+import React, { useState } from 'react';
 import { ShoppingBag, Plus, Minus, CheckCircle2, Loader2, X, Edit2, Trash2, IceCream, ThermometerSnowflake, Store, Move, Package, CheckSquare, Square } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { addToast } from '../store/toastStore';
-import { incrementarRacha } from '../store/rachaStore';
-import { notificarVenta } from '../lib/maxiEventEmitter';
+import useNevera from '../hooks/useNevera';
 
 export default function MiNevera({ usuario, tasaBcv, playSound }) {
-  const [productos, setProductos] = useState([]);
-  const [carrito, setCarrito] = useState([]);
-  const [cargando, setCargando] = useState(false);
-  const [despachando, setDespachando] = useState(false);
-  const [mostrarCheckout, setMostrarCheckout] = useState(false);
-  const [exitoVisual, setExitoVisual] = useState(false);
-  const [categoriaActiva, setCategoriaActiva] = useState('general');
+  const {
+    cargando,
+    carrito,
+    despachando,
+    exitoVisual,
+    modoSeleccionMultiple,
+    setModoSeleccionMultiple,
+    seleccionados,
+    totalUsd,
+    totalBs,
+    agregarAlCarrito,
+    modificarCantidadCarrito,
+    vaciarCarrito,
+    toggleSeleccion,
+    actualizarCantidadSeleccion,
+    añadirSeleccionadosAlCarrito,
+    cancelarSeleccionMultiple,
+    finalizarDespacho,
+    guardarEdicionProducto,
+    eliminarProducto,
+    moverCategoria,
+    getProductosPorCategoria,
+  } = useNevera(usuario?.id, tasaBcv, playSound);
 
-  // Estados para selección múltiple
-  const [modoSeleccionMultiple, setModoSeleccionMultiple] = useState(false);
-  const [seleccionados, setSeleccionados] = useState({}); // { id: cantidad }
+  const [categoriaActiva, setCategoriaActiva] = useState('general');
+  const [mostrarCheckout, setMostrarCheckout] = useState(false);
   const [mostrarPanelSeleccion, setMostrarPanelSeleccion] = useState(false);
 
-  // Mover categoría
   const [mostrarMoverModal, setMostrarMoverModal] = useState(false);
   const [productoAMover, setProductoAMover] = useState(null);
   const [nuevaCategoria, setNuevaCategoria] = useState('');
 
-  // Edición
   const [mostrarEditarModal, setMostrarEditarModal] = useState(false);
   const [productoEditando, setProductoEditando] = useState(null);
   const [editNombre, setEditNombre] = useState('');
@@ -37,372 +47,86 @@ export default function MiNevera({ usuario, tasaBcv, playSound }) {
   const [editImagenPreview, setEditImagenPreview] = useState('');
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
 
-  useEffect(() => {
-    cargarNevera();
-  }, [usuario]);
+  const productosFiltrados = getProductosPorCategoria(categoriaActiva);
 
-  const cargarNevera = async () => {
-    let currentUserId = usuario?.id;
-    if (!currentUserId) {
-      const { data: { session } } = await supabase.auth.getSession();
-      currentUserId = session?.user?.id;
-    }
-    if (!currentUserId) return;
-
-    setCargando(true);
-    try {
-      const { data, error } = await supabase
-        .from('productos')
-        .select('*')
-        .eq('user_id', currentUserId)
-        .order('nombre', { ascending: true });
-      if (error) throw error;
-      setProductos(data || []);
-    } catch (error) {
-      console.error("Error cargando la nevera:", error);
-      addToast("Error al cargar productos", 'error');
-    } finally {
-      setCargando(false);
-    }
-  };
-
-  const getNombreCategoria = (cat) => {
-    switch(cat) {
-      case 'congelador': return 'Congelador';
-      case 'frio': return 'Frío';
-      case 'mostrador': return 'Mostrador';
-      default: return 'General';
-    }
-  };
-
-  const moverProductoCategoria = async (producto, nuevaCat) => {
-    try {
-      const { error } = await supabase
-        .from('productos')
-        .update({ categoria: nuevaCat === 'general' ? null : nuevaCat })
-        .eq('id', producto.id);
-      if (error) throw error;
-      addToast(`✅ ${producto.nombre} movido a ${getNombreCategoria(nuevaCat)}`, 'success');
-      await cargarNevera();
-      if (playSound) playSound('coin_drop');
-    } catch (err) {
-      addToast('Error al mover producto: ' + err.message, 'error');
-    }
-  };
-
-  const abrirMoverModal = (producto) => {
-    setProductoAMover(producto);
-    setNuevaCategoria(producto.categoria || 'general');
-    setMostrarMoverModal(true);
-  };
-
-  const confirmarMover = () => {
-    if (productoAMover && nuevaCategoria) {
-      moverProductoCategoria(productoAMover, nuevaCategoria);
-      setMostrarMoverModal(false);
-      setProductoAMover(null);
-    }
-  };
-
-  const abrirEditar = (producto) => {
-    setProductoEditando(producto);
-    setEditNombre(producto.nombre);
-    const usd = producto.precio_venta_usd.toString();
+  const abrirEditar = (p) => {
+    setProductoEditando(p);
+    setEditNombre(p.nombre);
+    const usd = p.precio_venta_usd.toString();
     setEditPrecioUsd(usd);
-    const tasa = tasaBcv || 1;
-    setEditPrecioBs((parseFloat(usd.replace(',', '.')) * tasa).toFixed(2));
-    setEditStock(producto.stock_actual.toString());
-    setEditCategoria(producto.categoria || 'general');
-    setEditImagenPreview(producto.imagen_url || '');
+    setEditPrecioBs((parseFloat(usd) * (tasaBcv || 1)).toFixed(2));
+    setEditStock(p.stock_actual.toString());
+    setEditCategoria(p.categoria || 'general');
+    setEditImagenPreview(p.imagen_url || '');
     setEditImagen(null);
     setMostrarEditarModal(true);
   };
 
-  const handleEditUsdChange = (value) => {
-    const raw = value.replace(',', '.');
-    setEditPrecioUsd(value);
-    const num = parseFloat(raw);
-    if (!isNaN(num)) {
-      const tasa = tasaBcv || 1;
-      setEditPrecioBs((num * tasa).toFixed(2));
-    } else {
-      setEditPrecioBs('');
-    }
-  };
-
-  const handleEditBsChange = (value) => {
-    const raw = value.replace(',', '.');
-    setEditPrecioBs(value);
-    const num = parseFloat(raw);
-    if (!isNaN(num)) {
-      const tasa = tasaBcv || 1;
-      if (tasa > 0) {
-        setEditPrecioUsd((num / tasa).toFixed(2));
-      } else {
-        setEditPrecioUsd('');
-      }
-    } else {
-      setEditPrecioUsd('');
-    }
-  };
-
-  const handleEditImagenChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setEditImagen(file);
-      setEditImagenPreview(URL.createObjectURL(file));
-    }
-  };
-
-  const guardarEdicion = async (e) => {
+  const handleGuardarEdicion = async (e) => {
     e.preventDefault();
-    if (!editNombre || !editPrecioUsd || !editStock) {
-      addToast('Completa todos los campos', 'error');
-      return;
-    }
-
-    const precio = parseFloat(editPrecioUsd.toString().replace(',', '.'));
-    const stock = parseInt(editStock, 10);
-
-    if (isNaN(precio) || precio <= 0) {
-      addToast('Precio inválido', 'error');
-      return;
-    }
-    if (isNaN(stock) || stock < 0) {
-      addToast('Stock no puede ser negativo', 'error');
-      return;
-    }
-
     setGuardandoEdicion(true);
-    try {
-      let imagenFinalUrl = productoEditando.imagen_url;
-      if (editImagen) {
-        const fileExt = editImagen.name.split('.').pop();
-        const fileName = `${usuario.id}-${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
-        const { error: uploadError } = await supabase.storage
-          .from('productos')
-          .upload(fileName, editImagen, { cacheControl: '3600', upsert: false });
-        if (uploadError) throw new Error("Error al subir imagen: " + uploadError.message);
-        const { data: publicUrlData } = supabase.storage.from('productos').getPublicUrl(fileName);
-        imagenFinalUrl = publicUrlData.publicUrl;
-      }
-
-      const { error } = await supabase
-        .from('productos')
-        .update({
-          nombre: editNombre.trim(),
-          precio_venta_usd: precio,
-          stock_actual: stock,
-          categoria: editCategoria === 'general' ? null : editCategoria,
-          imagen_url: imagenFinalUrl,
-        })
-        .eq('id', productoEditando.id);
-
-      if (error) throw error;
-
-      setMostrarEditarModal(false);
-      addToast('Producto actualizado', 'success');
-      await cargarNevera();
-    } catch (err) {
-      addToast('Error: ' + err.message, 'error');
-    } finally {
-      setGuardandoEdicion(false);
-    }
+    const updates = {
+      nombre: editNombre.trim(),
+      precio_venta_usd: parseFloat(editPrecioUsd.replace(',', '.')),
+      stock_actual: parseInt(editStock, 10),
+      categoria: editCategoria === 'general' ? null : editCategoria,
+    };
+    const ok = await guardarEdicionProducto(productoEditando.id, updates, editImagen);
+    if (ok) setMostrarEditarModal(false);
+    setGuardandoEdicion(false);
   };
-
-  const eliminarProducto = async (id) => {
-    if (!window.confirm('¿Eliminar este producto de la nevera?')) return;
-    try {
-      const { error } = await supabase.from('productos').delete().eq('id', id);
-      if (error) throw error;
-      addToast('Producto eliminado', 'success');
-      await cargarNevera();
-    } catch (err) {
-      addToast('Error al eliminar: ' + err.message, 'error');
-    }
-  };
-
-  // ---- Funciones para el carrito normal ----
-  const tocarProducto = (producto) => {
-    if (modoSeleccionMultiple) return;
-    if (producto.stock_actual <= 0) return;
-    const existe = carrito.find(item => item.id === producto.id);
-    if (existe) {
-      if (existe.cantidadSeleccionada >= producto.stock_actual) return;
-      setCarrito(carrito.map(item => item.id === producto.id ? { ...item, cantidadSeleccionada: item.cantidadSeleccionada + 1 } : item));
-    } else {
-      setCarrito([...carrito, { ...producto, cantidadSeleccionada: 1 }]);
-    }
-    setMostrarCheckout(true);
-  };
-
-  const modificarCantidad = (id, incremento) => {
-    setCarrito(
-      carrito.map(item => {
-        if (item.id === id) {
-          const nuevaCant = item.cantidadSeleccionada + incremento;
-          if (nuevaCant <= 0) return null;
-          if (nuevaCant > item.stock_actual) return item;
-          return { ...item, cantidadSeleccionada: nuevaCant };
-        }
-        return item;
-      }).filter(Boolean)
-    );
-  };
-
-  // ---- Funciones para selección múltiple ----
-  const toggleSeleccionProducto = (producto) => {
-    setSeleccionados(prev => {
-      const newState = { ...prev };
-      if (newState[producto.id]) {
-        delete newState[producto.id];
-      } else {
-        newState[producto.id] = 1;
-      }
-      return newState;
-    });
-    if (!mostrarPanelSeleccion && Object.keys(seleccionados).length === 0) {
-      setMostrarPanelSeleccion(true);
-    }
-  };
-
-  const actualizarCantidadSeleccion = (id, cantidad) => {
-    const cant = parseInt(cantidad) || 0;
-    if (cant <= 0) {
-      setSeleccionados(prev => {
-        const newState = { ...prev };
-        delete newState[id];
-        return newState;
-      });
-    } else {
-      setSeleccionados(prev => ({ ...prev, [id]: cant }));
-    }
-  };
-
-  const añadirSeleccionadosAlCarrito = () => {
-    const nuevosItems = [];
-    for (const [id, cantidad] of Object.entries(seleccionados)) {
-      const producto = productos.find(p => p.id === id);
-      if (producto && cantidad > 0 && cantidad <= producto.stock_actual) {
-        const existe = carrito.find(i => i.id === id);
-        if (existe) {
-          setCarrito(prev => prev.map(i => i.id === id ? { ...i, cantidadSeleccionada: i.cantidadSeleccionada + cantidad } : i));
-        } else {
-          nuevosItems.push({ ...producto, cantidadSeleccionada: cantidad });
-        }
-      } else if (producto && cantidad > producto.stock_actual) {
-        addToast(`Stock insuficiente de ${producto.nombre}. Disponible: ${producto.stock_actual}`, 'error');
-      }
-    }
-    if (nuevosItems.length > 0) {
-      setCarrito(prev => [...prev, ...nuevosItems]);
-    }
-    setSeleccionados({});
-    setModoSeleccionMultiple(false);
-    setMostrarPanelSeleccion(false);
-    setMostrarCheckout(true);
-    addToast(`${nuevosItems.length + (carrito.length > 0 ? ' productos añadidos al carrito' : ' productos seleccionados')}`, 'success');
-  };
-
-  const cancelarSeleccionMultiple = () => {
-    setSeleccionados({});
-    setModoSeleccionMultiple(false);
-    setMostrarPanelSeleccion(false);
-  };
-
-  const totalUsd = carrito.reduce((acc, item) => acc + (item.precio_venta_usd * item.cantidadSeleccionada), 0);
-  const totalBs = totalUsd * (tasaBcv || 1);
-
-  const finalizarDespacho = async () => {
-    setDespachando(true);
-    try {
-      let currentUserId = usuario?.id;
-      if (!currentUserId) {
-        const { data: { session } } = await supabase.auth.getSession();
-        currentUserId = session.user.id;
-      }
-
-      for (const item of carrito) {
-        await supabase.from('ventas').insert([{
-          user_id: currentUserId,
-          producto_id: item.id,
-          cantidad: item.cantidadSeleccionada,
-          total_usd: item.precio_venta_usd * item.cantidadSeleccionada,
-          total_bs: (item.precio_venta_usd * item.cantidadSeleccionada) * (tasaBcv || 1),
-          tasa_bcv_momento: tasaBcv || 1
-        }]);
-        await supabase.from('productos').update({ stock_actual: item.stock_actual - item.cantidadSeleccionada }).eq('id', item.id);
-      }
-      setCarrito([]); setMostrarCheckout(false); setExitoVisual(true);
-      await cargarNevera();
-      setTimeout(() => setExitoVisual(false), 2000);
-
-      incrementarRacha('ventas');
-      notificarVenta({ totalUsd });
-      if (playSound) playSound('cash_register');
-      addToast(`💰 Venta realizada: $${totalUsd.toFixed(2)}`, 'success');
-    } catch (e) {
-      addToast("Error al despachar: " + e.message, 'error');
-      if (playSound) playSound('alert');
-    } finally {
-      setDespachando(false);
-    }
-  };
-
-  // Filtrar productos según categoría activa
-  const productosFiltrados = productos.filter(p => {
-    const prodCat = p.categoria || 'general';
-    return prodCat === categoriaActiva;
-  });
 
   if (cargando) return <div className="flex justify-center items-center h-64"><Loader2 className="w-8 h-8 animate-spin text-blue-500" /></div>;
 
   return (
     <div className="space-y-4 font-sans pb-12">
-      {/* Header */}
       <div className="bg-gradient-to-r from-blue-500 to-indigo-600 rounded-3xl p-4 text-white shadow-md flex items-center gap-3 relative overflow-hidden">
         <div className="text-3xl animate-bounce">👦🏻</div>
         <div className="flex-1">
           <p className="text-xs font-black uppercase tracking-widest text-blue-200">Maxi Despachador</p>
           <p className="text-sm font-bold leading-tight mt-0.5">
-            {productos.length === 0 ? "¡La nevera está vacía! Ve a 'La Cocina' para preparar dulces." : "¡Mostrador listo! Toca la vitrina para armar el pedido."}
+            {productosFiltrados.length === 0 ? "¡La nevera está vacía! Ve a 'La Cocina' para preparar dulces." : "¡Mostrador listo! Toca la vitrina para armar el pedido."}
           </p>
         </div>
       </div>
 
-      {/* Toggle selección múltiple y pestañas */}
       <div className="flex flex-wrap justify-between items-center gap-2">
         <div className="flex flex-wrap justify-center gap-1 bg-white p-2 rounded-2xl shadow-sm border border-slate-100 flex-1">
-          <button onClick={() => setCategoriaActiva('congelador')} className={`px-3 py-2 rounded-xl font-black text-sm flex items-center gap-1 transition-all ${categoriaActiva === 'congelador' ? 'bg-cyan-100 text-cyan-700' : 'text-slate-400 bg-slate-50'}`}>
-            <IceCream className="w-4 h-4" /> Congelador
-          </button>
-          <button onClick={() => setCategoriaActiva('frio')} className={`px-3 py-2 rounded-xl font-black text-sm flex items-center gap-1 transition-all ${categoriaActiva === 'frio' ? 'bg-blue-100 text-blue-700' : 'text-slate-400 bg-slate-50'}`}>
-            <ThermometerSnowflake className="w-4 h-4" /> Frío
-          </button>
-          <button onClick={() => setCategoriaActiva('mostrador')} className={`px-3 py-2 rounded-xl font-black text-sm flex items-center gap-1 transition-all ${categoriaActiva === 'mostrador' ? 'bg-amber-100 text-amber-700' : 'text-slate-400 bg-slate-50'}`}>
-            <Store className="w-4 h-4" /> Mostrador
-          </button>
-          <button onClick={() => setCategoriaActiva('general')} className={`px-3 py-2 rounded-xl font-black text-sm flex items-center gap-1 transition-all ${categoriaActiva === 'general' ? 'bg-gray-200 text-gray-700' : 'text-slate-400 bg-slate-50'}`}>
-            <Package className="w-4 h-4" /> General
-          </button>
+          {[
+            { key: 'congelador', icon: IceCream, label: 'Congelador' },
+            { key: 'frio', icon: ThermometerSnowflake, label: 'Frío' },
+            { key: 'mostrador', icon: Store, label: 'Mostrador' },
+            { key: 'general', icon: Package, label: 'General' },
+          ].map(({ key, icon: Icon, label }) => (
+            <button
+              key={key}
+              onClick={() => setCategoriaActiva(key)}
+              className={`px-3 py-2 rounded-xl font-black text-sm flex items-center gap-1 transition-all ${categoriaActiva === key ? 'bg-blue-100 text-blue-700' : 'text-slate-400 bg-slate-50'}`}
+            >
+              <Icon className="w-4 h-4" /> {label}
+            </button>
+          ))}
         </div>
         <button
           onClick={() => {
             if (modoSeleccionMultiple) cancelarSeleccionMultiple();
             else setModoSeleccionMultiple(true);
           }}
-          className={`px-3 py-2 rounded-xl font-bold text-sm flex items-center gap-1 transition-all ${modoSeleccionMultiple ? 'bg-green-600 text-white' : 'bg-slate-200 text-slate-700'}`}
+          className={`px-3 py-2 rounded-xl font-bold text-sm flex items-center gap-1 ${modoSeleccionMultiple ? 'bg-green-600 text-white' : 'bg-slate-200 text-slate-700'}`}
         >
           {modoSeleccionMultiple ? <X className="w-4 h-4" /> : <CheckSquare className="w-4 h-4" />}
           {modoSeleccionMultiple ? 'Cancelar' : 'Múltiple'}
         </button>
       </div>
 
-      {/* Lista de productos */}
       <div className="bg-white border border-slate-200/80 rounded-3xl p-3 shadow-sm min-h-[400px] relative">
         <div className="w-full h-2 bg-slate-300 rounded-full mb-4 opacity-40" />
         {productosFiltrados.length === 0 ? (
-          <div className="text-center py-20 text-slate-400 italic text-sm">No hay productos en esta categoría.</div>
+          <div className="text-center py-20">
+            <div className="text-5xl mb-3">❄️</div>
+            <p className="text-slate-400 font-medium">Esta vitrina está vacía</p>
+            <p className="text-xs text-slate-400 mt-1">Prepara algo delicioso o compra productos para vender.</p>
+          </div>
         ) : (
           <div className="grid grid-cols-2 gap-3">
             {productosFiltrados.map((p) => {
@@ -411,7 +135,7 @@ export default function MiNevera({ usuario, tasaBcv, playSound }) {
               return (
                 <div key={p.id} className="relative group">
                   <div
-                    onClick={() => modoSeleccionMultiple ? toggleSeleccionProducto(p) : tocarProducto(p)}
+                    onClick={() => modoSeleccionMultiple ? toggleSeleccion(p) : agregarAlCarrito(p)}
                     className={`bg-slate-50 p-3 rounded-2xl border flex flex-col justify-between relative overflow-hidden active:scale-95 transition-all min-h-[140px] w-full cursor-pointer ${agotado ? 'opacity-40 border-slate-200 grayscale' : 'border-slate-100 shadow-sm bg-white'} ${seleccionado ? 'ring-2 ring-green-500' : ''}`}
                   >
                     {modoSeleccionMultiple && (
@@ -430,21 +154,15 @@ export default function MiNevera({ usuario, tasaBcv, playSound }) {
                     <h3 className="font-black text-slate-700 text-sm mt-2 leading-tight line-clamp-2">{p.nombre}</h3>
                     <div className="mt-2 pt-2 border-t border-slate-100 w-full">
                       <p className="text-base font-black text-emerald-600 leading-none">${p.precio_venta_usd.toFixed(2)}</p>
-                      <p className="text-[10px] font-bold text-slate-400 mt-0.5 leading-none">{(p.precio_venta_usd * (tasaBcv || 1)).toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs</p>
+                      <p className="text-[10px] font-bold text-slate-400 mt-0.5 leading-none">{(p.precio_venta_usd * (tasaBcv || 1)).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs</p>
                     </div>
                   </div>
 
                   {!modoSeleccionMultiple && (
                     <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={(e) => { e.stopPropagation(); abrirMoverModal(p); }} className="p-1.5 bg-white border border-slate-200 rounded-lg text-purple-500 hover:bg-purple-50 active:scale-90 shadow-sm" title="Mover categoría">
-                        <Move className="w-4 h-4" />
-                      </button>
-                      <button onClick={(e) => { e.stopPropagation(); abrirEditar(p); }} className="p-1.5 bg-white border border-slate-200 rounded-lg text-blue-500 hover:bg-blue-50 active:scale-90 shadow-sm" title="Editar">
-                        <Edit2 className="w-4 h-4" />
-                      </button>
-                      <button onClick={(e) => { e.stopPropagation(); eliminarProducto(p.id); }} className="p-1.5 bg-white border border-slate-200 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 active:scale-90 shadow-sm" title="Eliminar">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <button onClick={(e) => { e.stopPropagation(); setProductoAMover(p); setNuevaCategoria(p.categoria || 'general'); setMostrarMoverModal(true); }} className="p-1.5 bg-white border border-slate-200 rounded-lg text-purple-500 hover:bg-purple-50 active:scale-90 shadow-sm" title="Mover categoría"><Move className="w-4 h-4" /></button>
+                      <button onClick={(e) => { e.stopPropagation(); abrirEditar(p); }} className="p-1.5 bg-white border border-slate-200 rounded-lg text-blue-500 hover:bg-blue-50 active:scale-90 shadow-sm" title="Editar"><Edit2 className="w-4 h-4" /></button>
+                      <button onClick={(e) => { e.stopPropagation(); eliminarProducto(p.id); }} className="p-1.5 bg-white border border-slate-200 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 active:scale-90 shadow-sm" title="Eliminar"><Trash2 className="w-4 h-4" /></button>
                     </div>
                   )}
                 </div>
@@ -454,14 +172,13 @@ export default function MiNevera({ usuario, tasaBcv, playSound }) {
         )}
       </div>
 
-      {/* Panel flotante de selección múltiple */}
       <AnimatePresence>
-        {modoSeleccionMultiple && mostrarPanelSeleccion && Object.keys(seleccionados).length > 0 && (
+        {modoSeleccionMultiple && Object.keys(seleccionados).length > 0 && (
           <motion.div initial={{ y: 100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 100, opacity: 0 }} className="fixed bottom-20 left-1/2 -translate-x-1/2 w-[90%] max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 p-4 z-50">
             <h4 className="font-black text-slate-800 mb-2">Productos seleccionados</h4>
             <div className="space-y-2 max-h-60 overflow-y-auto">
               {Object.entries(seleccionados).map(([id, cant]) => {
-                const prod = productos.find(p => p.id === id);
+                const prod = productosFiltrados.find(p => p.id === id);
                 if (!prod) return null;
                 return (
                   <div key={id} className="flex justify-between items-center bg-slate-50 p-2 rounded-xl">
@@ -483,16 +200,12 @@ export default function MiNevera({ usuario, tasaBcv, playSound }) {
         )}
       </AnimatePresence>
 
-      {/* Modal para mover categoría */}
       <AnimatePresence>
         {mostrarMoverModal && productoAMover && (
           <>
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-slate-900/60 z-[60] max-w-md mx-auto backdrop-blur-sm" onClick={() => setMostrarMoverModal(false)} />
             <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 250 }} className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[2.5rem] shadow-2xl z-[70] p-6 pb-8">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="font-black text-xl text-slate-800">Mover producto</h3>
-                <button onClick={() => setMostrarMoverModal(false)} className="bg-slate-100 p-2 rounded-full"><X className="w-5 h-5" /></button>
-              </div>
+              <div className="flex justify-between items-center mb-4"><h3 className="font-black text-xl text-slate-800">Mover producto</h3><button onClick={() => setMostrarMoverModal(false)} className="bg-slate-100 p-2 rounded-full"><X className="w-5 h-5" /></button></div>
               <p className="text-slate-600 mb-3">Mover "{productoAMover.nombre}" a:</p>
               <select value={nuevaCategoria} onChange={(e) => setNuevaCategoria(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-purple-500 font-bold mb-4">
                 <option value="congelador">Congelador</option>
@@ -501,7 +214,7 @@ export default function MiNevera({ usuario, tasaBcv, playSound }) {
                 <option value="general">General</option>
               </select>
               <div className="flex gap-2">
-                <button onClick={confirmarMover} className="flex-1 bg-purple-600 text-white py-3 rounded-xl font-black">Mover</button>
+                <button onClick={() => { moverCategoria(productoAMover, nuevaCategoria); setMostrarMoverModal(false); }} className="flex-1 bg-purple-600 text-white py-3 rounded-xl font-black">Mover</button>
                 <button onClick={() => setMostrarMoverModal(false)} className="flex-1 bg-slate-200 text-slate-700 py-3 rounded-xl font-black">Cancelar</button>
               </div>
             </motion.div>
@@ -509,52 +222,28 @@ export default function MiNevera({ usuario, tasaBcv, playSound }) {
         )}
       </AnimatePresence>
 
-      {/* Modal de edición */}
       <AnimatePresence>
         {mostrarEditarModal && productoEditando && (
           <>
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-slate-900/60 z-[60] max-w-md mx-auto backdrop-blur-sm" onClick={() => setMostrarEditarModal(false)} />
             <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 250 }} className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[2.5rem] shadow-2xl z-[70] p-6 pb-8">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="font-black text-xl text-slate-800">✏️ Editar Producto</h3>
-                <button onClick={() => setMostrarEditarModal(false)} className="bg-slate-100 p-2 rounded-full"><X className="w-5 h-5" /></button>
-              </div>
-              <form onSubmit={guardarEdicion} className="space-y-4">
-                <div>
-                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">Nombre</label>
-                  <input type="text" value={editNombre} onChange={(e) => setEditNombre(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-blue-500 font-bold" required />
+              <div className="flex justify-between items-center mb-4"><h3 className="font-black text-xl text-slate-800">✏️ Editar Producto</h3><button onClick={() => setMostrarEditarModal(false)} className="bg-slate-100 p-2 rounded-full"><X className="w-5 h-5" /></button></div>
+              <form onSubmit={handleGuardarEdicion} className="space-y-4">
+                <input type="text" value={editNombre} onChange={(e) => setEditNombre(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-blue-500 font-bold" required />
+                <select value={editCategoria} onChange={(e) => setEditCategoria(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-blue-500 font-bold">
+                  <option value="congelador">Congelador</option>
+                  <option value="frio">Frío</option>
+                  <option value="mostrador">Mostrador</option>
+                  <option value="general">General</option>
+                </select>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="relative"><span className="absolute left-3 top-3 text-emerald-600 font-bold text-sm">$</span><input type="text" inputMode="decimal" value={editPrecioUsd} onChange={(e) => { setEditPrecioUsd(e.target.value); const num = parseFloat(e.target.value.replace(',', '.')); if (!isNaN(num)) setEditPrecioBs((num * (tasaBcv || 1)).toFixed(2)); }} className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-4 py-3 outline-none focus:border-blue-500 font-bold" required /></div>
+                  <div className="relative"><span className="absolute left-3 top-3 text-amber-600 font-bold text-sm">Bs</span><input type="text" inputMode="decimal" value={editPrecioBs} onChange={(e) => { setEditPrecioBs(e.target.value); const num = parseFloat(e.target.value.replace(',', '.')); if (!isNaN(num) && tasaBcv) setEditPrecioUsd((num / tasaBcv).toFixed(2)); }} className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-4 py-3 outline-none focus:border-blue-500 font-bold" /></div>
                 </div>
-                <div>
-                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">Categoría</label>
-                  <select value={editCategoria} onChange={(e) => setEditCategoria(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-blue-500 font-bold">
-                    <option value="congelador">Congelador</option>
-                    <option value="frio">Frío</option>
-                    <option value="mostrador">Mostrador</option>
-                    <option value="general">General</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">Precio de venta</label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="relative"><span className="absolute left-3 top-3 text-emerald-600 font-bold text-sm">$</span><input type="text" inputMode="decimal" value={editPrecioUsd} onChange={(e) => handleEditUsdChange(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-4 py-3 outline-none focus:border-blue-500 font-bold" required /></div>
-                    <div className="relative"><span className="absolute left-3 top-3 text-amber-600 font-bold text-sm">Bs</span><input type="text" inputMode="decimal" value={editPrecioBs} onChange={(e) => handleEditBsChange(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-4 py-3 outline-none focus:border-blue-500 font-bold" /></div>
-                  </div>
-                  <p className="text-[10px] text-slate-400 ml-1 mt-1">Tasa: {tasaBcv?.toFixed(2) || '---'} Bs/$</p>
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">Stock actual</label>
-                  <input type="number" min="0" step="1" value={editStock} onChange={(e) => setEditStock(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-blue-500 font-bold" required />
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">Imagen</label>
-                  <div className="relative border-2 border-dashed border-slate-200 rounded-xl p-2 text-center">
-                    <input type="file" accept="image/*" onChange={handleEditImagenChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-                    {editImagenPreview ? (
-                      <img src={editImagenPreview} alt="preview" className="w-16 h-16 rounded-full object-cover mx-auto" />
-                    ) : (
-                      <p className="text-xs text-slate-400">Toca para subir imagen</p>
-                    )}
-                  </div>
+                <input type="number" min="0" step="1" value={editStock} onChange={(e) => setEditStock(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-blue-500 font-bold" required />
+                <div className="relative border-2 border-dashed border-slate-200 rounded-xl p-2 text-center">
+                  <input type="file" accept="image/*" onChange={(e) => { const file = e.target.files[0]; if (file) { setEditImagen(file); setEditImagenPreview(URL.createObjectURL(file)); } }} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                  {editImagenPreview ? <img src={editImagenPreview} alt="preview" className="w-16 h-16 rounded-full object-cover mx-auto" /> : <p className="text-xs text-slate-400">Toca para subir imagen</p>}
                 </div>
                 <button type="submit" disabled={guardandoEdicion} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-4 rounded-2xl active:scale-95 transition-all flex items-center justify-center">
                   {guardandoEdicion ? <Loader2 className="w-6 h-6 animate-spin" /> : 'GUARDAR CAMBIOS'}
@@ -565,7 +254,6 @@ export default function MiNevera({ usuario, tasaBcv, playSound }) {
         )}
       </AnimatePresence>
 
-      {/* Checkout (modal de venta) */}
       <AnimatePresence>
         {exitoVisual && (
           <motion.div initial={{ opacity: 0, y: 50, scale: 0.9 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="fixed inset-x-4 top-1/3 mx-auto max-w-xs bg-emerald-500 text-white p-4 rounded-3xl shadow-2xl flex flex-col items-center text-center z-[80] border-4 border-white">
@@ -592,13 +280,13 @@ export default function MiNevera({ usuario, tasaBcv, playSound }) {
                       <p className="font-bold text-slate-700 text-sm truncate">{item.nombre}</p>
                       <div className="flex items-center gap-2 mt-0.5">
                         <span className="text-sm font-black text-emerald-600">${(item.precio_venta_usd * item.cantidadSeleccionada).toFixed(2)}</span>
-                        <span className="text-[10px] font-bold text-slate-400">{(item.precio_venta_usd * item.cantidadSeleccionada * (tasaBcv || 1)).toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs</span>
+                        <span className="text-[10px] font-bold text-slate-400">{(item.precio_venta_usd * item.cantidadSeleccionada * (tasaBcv || 1)).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl p-1 shadow-sm shrink-0">
-                      <button onClick={() => modificarCantidad(item.id, -1)} className="p-1 text-slate-500 active:bg-slate-100 rounded-lg"><Minus className="w-4 h-4" /></button>
+                      <button onClick={() => modificarCantidadCarrito(item.id, -1)} className="p-1 text-slate-500 active:bg-slate-100 rounded-lg"><Minus className="w-4 h-4" /></button>
                       <span className="font-black text-slate-800 text-sm px-1 w-4 text-center">{item.cantidadSeleccionada}</span>
-                      <button onClick={() => modificarCantidad(item.id, 1)} className="p-1 text-slate-500 active:bg-slate-100 rounded-lg"><Plus className="w-4 h-4" /></button>
+                      <button onClick={() => modificarCantidadCarrito(item.id, 1)} className="p-1 text-slate-500 active:bg-slate-100 rounded-lg"><Plus className="w-4 h-4" /></button>
                     </div>
                   </div>
                 ))}

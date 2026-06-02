@@ -3,8 +3,9 @@ import { supabase } from '../lib/supabase';
 import { Settings, Store, MessageSquare, Save, Loader2, UploadCloud, CheckCircle, CreditCard, DollarSign, RefreshCw, PenTool } from 'lucide-react';
 import { useStore } from '@nanostores/react';
 import { tasaBcvStore, actualizarTasaBcv, origenTasaStore } from '../store/configStore';
-import { addToast } from '../store/toastStore'; // ✅ NUEVO
+import { addToast } from '../store/toastStore';
 import { maxiVisible } from '../store/maxiStore';
+import { planActual } from '../store/suscripcionStore';
 
 const LOGOS_PREDETERMINADOS = [
   "https://api.dicebear.com/7.x/initials/svg?seed=MX&backgroundColor=2563eb",
@@ -17,11 +18,7 @@ export default function ModuloConfiguracion({ usuario }) {
   const [cargando, setCargando] = useState(true);
   const [procesando, setProcesando] = useState(false);
   const [cargandoOficial, setCargandoOficial] = useState(false);
-// Al inicio del componente, después de las declaraciones:
-useEffect(() => {
-  const saved = localStorage.getItem('maxi_visible');
-  if (saved !== null) maxiVisible.set(saved === 'true');
-}, []);
+
   const tasaGlobal = useStore(tasaBcvStore);
   const origenGlobal = useStore(origenTasaStore);
   const [inputTasa, setInputTasa] = useState('');
@@ -84,10 +81,10 @@ useEffect(() => {
       const nuevaTasa = data.promedio;
       actualizarTasaBcv(nuevaTasa, 'oficial');
       setInputTasa(nuevaTasa.toString());
-      addToast(`✅ Tasa oficial actualizada: ${nuevaTasa.toFixed(2)} Bs`, 'success'); // ✅ TOAST
+      addToast(`✅ Tasa oficial actualizada: ${nuevaTasa.toFixed(2)} Bs`, 'success');
     } catch (error) {
       console.error(error);
-      addToast("❌ No se pudo obtener la tasa oficial. Revisa tu conexión.", 'error'); // ✅ TOAST
+      addToast("❌ No se pudo obtener la tasa oficial. Revisa tu conexión.", 'error');
     } finally {
       setCargandoOficial(false);
     }
@@ -97,11 +94,11 @@ useEffect(() => {
     if (!inputTasa) return;
     const num = parseFloat(inputTasa.toString().replace(',', '.'));
     if (isNaN(num) || num <= 0) {
-      addToast("Ingresa un número válido para la tasa manual", 'error'); // ✅ TOAST
+      addToast("Ingresa un número válido para la tasa manual", 'error');
       return;
     }
     actualizarTasaBcv(num, 'manual');
-    addToast(`📝 Tasa manual establecida: ${num.toFixed(2)} Bs`, 'success'); // ✅ TOAST
+    addToast(`📝 Tasa manual establecida: ${num.toFixed(2)} Bs`, 'success');
   };
 
   const manejarSeleccionArchivo = (e) => {
@@ -152,10 +149,10 @@ useEffect(() => {
 
       if (error) throw error;
 
-      addToast("¡Configuración y Tasa guardadas con éxito!", 'success'); // ✅ TOAST
+      addToast("¡Configuración y Tasa guardadas con éxito!", 'success');
       
     } catch (error) {
-      addToast(error.message, 'error'); // ✅ TOAST
+      addToast(error.message, 'error');
     } finally {
       setProcesando(false);
     }
@@ -215,27 +212,59 @@ useEffect(() => {
         </div>
 
         {/* Toggle para mostrar/ocultar Maxi */}
-<div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
-  <div className="flex items-center justify-between">
-    <div>
-      <label className="text-sm font-black text-slate-700">Mostrar a Maxi</label>
-      <p className="text-xs text-slate-400">El asistente te motivará con versículos bíblicos</p>
-    </div>
-    <button
-      type="button"
-      onClick={() => {
-        const newValue = !maxiVisible.get();
-        maxiVisible.set(newValue);
-        localStorage.setItem('maxi_visible', newValue);
-      }}
-      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${maxiVisible.get() ? 'bg-blue-600' : 'bg-gray-300'}`}
-    >
+        <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100">
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="text-sm font-black text-slate-700">Mostrar a Maxi</label>
+              <p className="text-xs text-slate-400">El asistente te motivará con versículos bíblicos</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const newValue = !maxiVisible.get();
+                maxiVisible.set(newValue);
+                localStorage.setItem('maxi_visible', newValue);
+              }}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${maxiVisible.get() ? 'bg-blue-600' : 'bg-gray-300'}`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${maxiVisible.get() ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
+          </div>
+        </div>
 
-      
-      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${maxiVisible.get() ? 'translate-x-6' : 'translate-x-1'}`} />
-    </button>
-  </div>
-</div>
+        {/* Plan actual */}
+        <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100">
+          <h3 className="font-bold text-slate-800 mb-2">Tu plan actual</h3>
+          <p className="text-xs text-slate-500 mb-3">
+            {planActual.get() === 'pro' ? 'Maxi Pro - Ilimitado' : 'Maxi Free - Hasta 20 productos y 20 insumos'}
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              alert('Maxi Pro ofrece: productos ilimitados, exportación a Excel, curso completo "Aprende con Maxi" y soporte prioritario. ¡Próximamente disponible!');
+            }}
+            className="bg-amber-500 text-white font-black py-2 px-4 rounded-xl active:scale-95 transition-transform text-sm"
+          >
+            {planActual.get() === 'pro' ? 'Gestionar' : 'Ver planes'}
+          </button>
+        </div>
+
+        {/* Reiniciar onboarding */}
+        <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100">
+          <h3 className="font-bold text-slate-800 mb-2">Onboarding</h3>
+          <p className="text-xs text-slate-500 mb-3">Si quieres volver a personalizar tu experiencia, puedes reiniciar el asistente de bienvenida.</p>
+          <button
+            type="button"
+            onClick={() => {
+              localStorage.removeItem('maxi_onboarding_completado');
+              localStorage.removeItem('maxi_tipo_usuario');
+              addToast('Onboarding reiniciado. La próxima vez que entres, Maxi te preguntará de nuevo.', 'success');
+            }}
+            className="bg-amber-500 text-white font-black py-2 px-4 rounded-xl active:scale-95 transition-transform"
+          >
+            Reiniciar Onboarding
+          </button>
+        </div>
 
         <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 space-y-8">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

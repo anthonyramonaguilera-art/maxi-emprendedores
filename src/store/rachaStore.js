@@ -1,5 +1,6 @@
 import { atom } from 'nanostores';
 import { esHoy, esAyer, fechaHoy } from '../lib/rachaHelpers';
+import { notificarRachaPerdida } from '../lib/maxiEventEmitter';
 
 const STORAGE_KEY = 'maxi_rachas';
 
@@ -17,7 +18,6 @@ function guardarEnLocalStorage(data) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 
-// Estado inicial: si no hay nada en localStorage, comenzamos con valores vacíos
 const estadoInicial = cargarDesdeLocalStorage() || {
   ventas: { ultimaFecha: null, racha: 0 },
   cocina: { ultimaFecha: null, racha: 0 },
@@ -26,9 +26,6 @@ const estadoInicial = cargarDesdeLocalStorage() || {
 
 export const rachasStore = atom(estadoInicial);
 
-/**
- * Incrementa la racha del tipo dado si corresponde (hoy, ayer, etc.)
- */
 export function incrementarRacha(tipo) {
   const estado = rachasStore.get();
   const actual = estado[tipo];
@@ -38,17 +35,14 @@ export function incrementarRacha(tipo) {
   let nuevaFecha = actual.ultimaFecha;
 
   if (!nuevaFecha) {
-    // primera vez
     nuevaRacha = 1;
     nuevaFecha = hoy;
   } else if (esHoy(nuevaFecha)) {
-    // ya se actualizó hoy, no hacer nada
     return;
   } else if (esAyer(nuevaFecha)) {
     nuevaRacha += 1;
     nuevaFecha = hoy;
   } else {
-    // más de un día, reiniciar
     nuevaRacha = 1;
     nuevaFecha = hoy;
   }
@@ -60,18 +54,17 @@ export function incrementarRacha(tipo) {
 
   rachasStore.set(nuevoEstado);
   guardarEnLocalStorage(nuevoEstado);
+
+  // Si la racha se reinició (pasó de >1 a 1), notificar a Maxi
+  if (nuevaRacha === 1 && (actual.racha || 0) > 1) {
+    notificarRachaPerdida(tipo);
+  }
 }
 
-/**
- * Actualiza la racha de aprendizaje si no se ha hecho hoy (para la apertura de la app)
- */
 export function actualizarRachaAprendizaje() {
   incrementarRacha('aprendizaje');
 }
 
-/**
- * Devuelve las rachas actuales (útil para componentes)
- */
 export function getRachas() {
   return rachasStore.get();
 }

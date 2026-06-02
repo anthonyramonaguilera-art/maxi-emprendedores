@@ -1,6 +1,6 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { supabase } from '../lib/supabase';
-import { Archive, Soup, Store, LogOut, Coins, Loader2, Settings } from 'lucide-react';
+import { Archive, Soup, Store, LogOut, Coins, Loader2, Settings, GraduationCap } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@nanostores/react';
 import { tasaBcvStore, actualizarTasaBcv, origenTasaStore } from '../store/configStore';
@@ -8,7 +8,9 @@ import { actualizarRachaAprendizaje } from '../store/rachaStore';
 import useSound from '../hooks/useSound';
 import ErrorBoundary from './ErrorBoundary';
 import MaxiAvatar from './MaxiAvatar';
-import { maxiVisible } from '../store/maxiStore';
+import MaxiAssistant from './MaxiAssistant';
+import LogroDesbloqueadoModal from './LogroDesbloqueadoModal';
+import OnboardingWizard from './OnboardingWizard';
 
 // Carga diferida de componentes pesados
 const MiAlacena = React.lazy(() => import('./MiAlacena'));
@@ -16,32 +18,30 @@ const LaCocina = React.lazy(() => import('./LaCocina'));
 const MiNevera = React.lazy(() => import('./MiNevera'));
 const MisCuentas = React.lazy(() => import('./MisCuentas'));
 const ModuloConfiguracion = React.lazy(() => import('./ModuloConfiguracion'));
+const Aprender = React.lazy(() => import('./Aprender'));
 const ToastContainer = React.lazy(() => import('./ToastContainer'));
 const RachaBar = React.lazy(() => import('./RachaBar'));
 
 export default function DashboardApp({ usuario }) {
-  const [tabActiva, setTabActiva] = useState('nevera');
+  const tipoGuardado = typeof window !== 'undefined' ? localStorage.getItem('maxi_tipo_usuario') : null;
+  const [tabActiva, setTabActiva] = useState(
+    tipoGuardado === 'emprendedor' ? 'cocina' : (tipoGuardado === 'revendedor' ? 'nevera' : 'nevera')
+  );
   const [perfil, setPerfil] = useState(null);
   const [usuarioValidado, setUsuarioValidado] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
+  const [mostrarOnboarding, setMostrarOnboarding] = useState(false);
 
   const tasaBcvGlobal = useStore(tasaBcvStore);
   const origenTasa = useStore(origenTasaStore);
   const { playSound } = useSound();
-
-  // Cargar preferencia de visibilidad de Maxi desde localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem('maxi_visible');
-    if (saved !== null) maxiVisible.set(saved === 'true');
-  }, []);
 
   useEffect(() => {
     let montado = true;
 
     const inicializarApp = async () => {
       try {
-        // Tasa BCV
         if (tasaBcvStore.get() === 0) {
           fetch('https://ve.dolarapi.com/v1/dolares/oficial')
             .then(res => res.json())
@@ -49,7 +49,6 @@ export default function DashboardApp({ usuario }) {
             .catch(() => actualizarTasaBcv(51.20, 'manual'));
         }
 
-        // Obtener usuario de sesión
         let currentUser = usuario;
         if (!currentUser || !currentUser.id) {
           const { data: { session }, error: sessionError } = await supabase.auth.getSession();
@@ -67,7 +66,6 @@ export default function DashboardApp({ usuario }) {
           actualizarRachaAprendizaje();
         }
 
-        // Cargar perfil
         const { data, error: perfilError } = await supabase
           .from('perfiles')
           .select('*')
@@ -89,6 +87,31 @@ export default function DashboardApp({ usuario }) {
 
     return () => { montado = false; };
   }, [usuario]);
+
+  useEffect(() => {
+    if (!usuarioValidado) return;
+    const onboardCompletado = localStorage.getItem('maxi_onboarding_completado');
+    if (onboardCompletado !== 'true') {
+      setMostrarOnboarding(true);
+    }
+  }, [usuarioValidado]);
+
+  const completarOnboarding = async (tipoUsuario) => {
+    localStorage.setItem('maxi_onboarding_completado', 'true');
+    localStorage.setItem('maxi_tipo_usuario', tipoUsuario);
+    const { error } = await supabase
+      .from('perfiles')
+      .upsert({ user_id: usuarioValidado.id, tipo_usuario: tipoUsuario });
+    if (!error) {
+      setPerfil(prev => ({ ...prev, tipo_usuario: tipoUsuario }));
+    }
+    setMostrarOnboarding(false);
+    if (tipoUsuario === 'emprendedor') {
+      setTabActiva('cocina');
+    } else {
+      setTabActiva('nevera');
+    }
+  };
 
   const cerrarSesion = async () => {
     await supabase.auth.signOut();
@@ -118,7 +141,7 @@ export default function DashboardApp({ usuario }) {
 
   return (
     <div className="min-h-screen bg-slate-100 font-sans flex justify-center">
-      <div className="w-full max-w-md bg-slate-50 min-h-screen flex flex-col shadow-2xl relative pb-24 overflow-x-hidden">
+      <div className="w-full max-w-md md:max-w-2xl lg:max-w-4xl bg-slate-50 min-h-screen flex flex-col shadow-2xl relative pb-24 overflow-x-hidden">
         
         <header className="bg-white border-b border-slate-100 px-4 py-3 flex flex-col sticky top-0 z-40 shadow-sm">
           <div className="flex justify-between items-center">
@@ -148,7 +171,7 @@ export default function DashboardApp({ usuario }) {
                 </p>
               </div>
               
-              <button onClick={cerrarSesion} className="p-2 text-slate-400 hover:text-red-500 rounded-xl hover:bg-red-50 transition-colors">
+              <button onClick={cerrarSesion} className="p-2 text-slate-400 hover:text-red-500 rounded-xl hover:bg-red-50 transition-colors active:scale-90">
                 <LogOut className="w-5 h-5" />
               </button>
               
@@ -184,37 +207,48 @@ export default function DashboardApp({ usuario }) {
                 <ErrorBoundary>
                   {tabActiva === 'configuracion' && <ModuloConfiguracion usuario={usuarioValidado} />}
                 </ErrorBoundary>
+                <ErrorBoundary>
+                  {tabActiva === 'aprender' && <Aprender playSound={playSound} />}
+                </ErrorBoundary>
               </motion.div>
             </AnimatePresence>
           </Suspense>
         </main>
 
-        <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-white border-t border-slate-100 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] px-2 py-2 flex justify-around items-center z-50 rounded-t-3xl">
-          <button onClick={() => setTabActiva('alacena')} className={`flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all ${tabActiva === 'alacena' ? 'bg-emerald-50 text-emerald-600 scale-105 font-black' : 'text-slate-400 font-medium'}`}>
+        {/* Barra de navegación inferior con Aprender */}
+        <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md md:max-w-2xl lg:max-w-4xl bg-white border-t border-slate-100 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] px-2 py-2 flex justify-around items-center z-50 rounded-t-3xl">
+          <button onClick={() => setTabActiva('alacena')} className={`flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all active:scale-90 ${tabActiva === 'alacena' ? 'bg-emerald-50 text-emerald-600 scale-105 font-black' : 'text-slate-400 font-medium'}`}>
             <Archive className="w-5 h-5" />
             <span className="text-[10px] mt-1 tracking-tight">Alacena</span>
           </button>
-          <button onClick={() => setTabActiva('cocina')} className={`flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all ${tabActiva === 'cocina' ? 'bg-amber-50 text-amber-600 scale-105 font-black' : 'text-slate-400 font-medium'}`}>
+          <button onClick={() => setTabActiva('cocina')} className={`flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all active:scale-90 ${tabActiva === 'cocina' ? 'bg-amber-50 text-amber-600 scale-105 font-black' : 'text-slate-400 font-medium'}`}>
             <Soup className="w-5 h-5" />
             <span className="text-[10px] mt-1 tracking-tight">La Cocina</span>
           </button>
-          <button onClick={() => setTabActiva('nevera')} className={`flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all ${tabActiva === 'nevera' ? 'bg-blue-50 text-blue-600 scale-105 font-black' : 'text-slate-400 font-medium'}`}>
+          <button onClick={() => setTabActiva('nevera')} className={`flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all active:scale-90 ${tabActiva === 'nevera' ? 'bg-blue-50 text-blue-600 scale-105 font-black' : 'text-slate-400 font-medium'}`}>
             <Store className="w-5 h-5" />
             <span className="text-[10px] mt-1 tracking-tight">Mi Nevera</span>
           </button>
-          <button onClick={() => setTabActiva('cuentas')} className={`flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all ${tabActiva === 'cuentas' ? 'bg-indigo-50 text-indigo-600 scale-105 font-black' : 'text-slate-400 font-medium'}`}>
+          <button onClick={() => setTabActiva('cuentas')} className={`flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all active:scale-90 ${tabActiva === 'cuentas' ? 'bg-indigo-50 text-indigo-600 scale-105 font-black' : 'text-slate-400 font-medium'}`}>
             <Coins className="w-5 h-5" />
             <span className="text-[10px] mt-1 tracking-tight">Finanzas</span>
           </button>
+          <button onClick={() => setTabActiva('aprender')} className={`flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all active:scale-90 ${tabActiva === 'aprender' ? 'bg-purple-50 text-purple-600 scale-105 font-black' : 'text-slate-400 font-medium'}`}>
+            <GraduationCap className="w-5 h-5" />
+            <span className="text-[10px] mt-1 tracking-tight">Aprender</span>
+          </button>
         </nav>
 
-        {/* Maxi Avatar (visible siempre, pero controlado por store) */}
-        <MaxiAvatar tabActiva={tabActiva} />
+        <MaxiAvatar activeTab={tabActiva} />
+        <MaxiAssistant usuario={usuarioValidado} />
 
         <Suspense fallback={null}>
           <ToastContainer />
         </Suspense>
       </div>
+
+      <LogroDesbloqueadoModal />
+      {mostrarOnboarding && <OnboardingWizard onComplete={completarOnboarding} />}
     </div>
   );
 }

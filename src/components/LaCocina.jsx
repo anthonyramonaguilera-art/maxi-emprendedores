@@ -1,371 +1,118 @@
-import React, { useState, useEffect } from 'react';
-import { supabase } from '../lib/supabase';
+import React, { useState } from 'react';
 import { Soup, CakeSlice, Plus, ArrowRight, ArrowLeft, Loader2, Trash2, Store, X, Zap, IceCream, BookMarked, FolderOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { addToast } from '../store/toastStore';
-import { incrementarRacha } from '../store/rachaStore';
-import { notificarCocina } from '../lib/maxiEventEmitter';
+import useCocina from '../hooks/useCocina';
 
 export default function LaCocina({ usuario, tasaBcv, playSound }) {
-  const [alacena, setAlacena] = useState([]);
-  const [cargando, setCargando] = useState(false);
-  const [guardando, setGuardando] = useState(false);
-  const [subPestaña, setSubPestaña] = useState('preparar'); // 'preparar' o 'misRecetas'
-  
-  // Estado para la preparación normal
-  const [paso, setPaso] = useState(1); 
-  const [tipoPreparacion, setTipoPreparacion] = useState('olla'); 
-  const [ingredientesOlla, setIngredientesOlla] = useState([]);
+  const {
+    alacena,
+    cargandoAlacena,
+    recetas,
+    cargandoRecetas,
+    ingredientesOlla,
+    costoIngredientesUsd,
+    agregarALaOlla,
+    actualizarCantidadUsada,
+    sacarDeLaOlla,
+    enviarANevera,
+    cargarRecetaCompleta,
+    handleEliminarReceta,
+  } = useCocina(usuario?.id, tasaBcv, playSound);
+
+  const [subPestaña, setSubPestaña] = useState('preparar');
+  const [paso, setPaso] = useState(1);
+  const [tipoPreparacion, setTipoPreparacion] = useState('olla');
   const [mostrarSelector, setMostrarSelector] = useState(false);
-  
+
   const [rendimiento, setRendimiento] = useState('');
   const [nombreProducto, setNombreProducto] = useState('');
   const [precioVentaUsd, setPrecioVentaUsd] = useState('');
   const [precioVentaBs, setPrecioVentaBs] = useState('');
-
   const [tempCongelado, setTempCongelado] = useState('');
   const [tiempoCongelado, setTiempoCongelado] = useState('');
   const [requierePalito, setRequierePalito] = useState(false);
-
   const [porcentajeOperativo, setPorcentajeOperativo] = useState(15);
   const [modoAvanzadoOperativo, setModoAvanzadoOperativo] = useState(false);
-
   const [guardarComoReceta, setGuardarComoReceta] = useState(false);
   const [nombreReceta, setNombreReceta] = useState('');
+  const [guardando, setGuardando] = useState(false);
 
-  // Estado para recetas guardadas
-  const [recetas, setRecetas] = useState([]);
-  const [cargandoRecetas, setCargandoRecetas] = useState(false);
-
-  // Cargar alacena y recetas al montar
-  useEffect(() => {
-    cargarAlacena();
-    cargarRecetas();
-  }, [usuario]);
-
-  const cargarAlacena = async () => {
-    let currentUserId = usuario?.id;
-    if (!currentUserId) {
-      const { data: { session } } = await supabase.auth.getSession();
-      currentUserId = session?.user?.id;
-    }
-    if (!currentUserId) return;
-
-    setCargando(true);
-    try {
-      const { data, error } = await supabase
-        .from('insumos')
-        .select('*')
-        .eq('user_id', currentUserId)
-        .eq('archivado', false)
-        .gt('cantidad_actual', 0)
-        .order('nombre', { ascending: true });
-      if (error) throw error;
-      setAlacena(data);
-    } catch (error) {
-      console.error("Error en La Cocina:", error);
-      addToast("No se pudieron cargar los insumos", 'error');
-    } finally {
-      setCargando(false);
-    }
-  };
-
-  const cargarRecetas = async () => {
-    let currentUserId = usuario?.id;
-    if (!currentUserId) {
-      const { data: { session } } = await supabase.auth.getSession();
-      currentUserId = session?.user?.id;
-    }
-    if (!currentUserId) return;
-
-    setCargandoRecetas(true);
-    try {
-      const { data, error } = await supabase
-        .from('recetas')
-        .select('*')
-        .eq('user_id', currentUserId)
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      setRecetas(data || []);
-    } catch (error) {
-      console.error("Error cargando recetas:", error);
-    } finally {
-      setCargandoRecetas(false);
-    }
-  };
-
-  const cargarRecetaCompleta = async (recetaId) => {
-    setCargando(true);
-    try {
-      // Obtener ingredientes de la receta
-      const { data: ingredientes, error } = await supabase
-        .from('recetas_ingredientes')
-        .select('insumo_id, cantidad_necesaria, unidad_medida')
-        .eq('receta_id', recetaId);
-      if (error) throw error;
-
-      // Buscar los insumos actuales (con stock)
-      const nuevosIngredientes = [];
-      for (const ing of ingredientes) {
-        const insumo = alacena.find(i => i.id === ing.insumo_id);
-        if (!insumo) {
-          addToast(`El insumo necesario ya no existe en tu alacena.`, 'error');
-          continue;
-        }
-        nuevosIngredientes.push({
-          insumo,
-          cantidadUsada: ing.cantidad_necesaria.toString()
-        });
-      }
-      setIngredientesOlla(nuevosIngredientes);
-      setSubPestaña('preparar');
-      setPaso(1);
-      addToast(`Receta cargada. Revisa los ingredientes y ajusta cantidades si es necesario.`, 'success');
-    } catch (error) {
-      addToast("Error al cargar receta: " + error.message, 'error');
-    } finally {
-      setCargando(false);
-    }
-  };
-
-  const eliminarReceta = async (recetaId) => {
-    if (!window.confirm('¿Eliminar esta receta?')) return;
-    try {
-      const { error } = await supabase.from('recetas').delete().eq('id', recetaId);
-      if (error) throw error;
-      addToast('Receta eliminada', 'success');
-      cargarRecetas();
-    } catch (error) {
-      addToast('Error al eliminar receta', 'error');
-    }
-  };
-
-  // Funciones de la preparación (ya las tienes, las mantengo igual)
-  const agregarALaOlla = (insumo) => {
-    const cantidadMaxima = insumo.cantidad_actual;
-    if (cantidadMaxima <= 0) {
-      addToast(`❌ No tienes suficiente ${insumo.nombre}. Stock: ${cantidadMaxima} ${insumo.unidad_medida}`, 'error');
-      if (playSound) playSound('alert');
-      return;
-    }
-    const existe = ingredientesOlla.find(i => i.insumo.id === insumo.id);
-    if (!existe) {
-      setIngredientesOlla([...ingredientesOlla, { insumo, cantidadUsada: '' }]);
-    } else {
-      addToast(`⚠️ ${insumo.nombre} ya está en la olla. Puedes aumentar la cantidad.`, 'info');
-    }
-    setMostrarSelector(false);
-  };
-
-  const actualizarCantidadUsada = (id, cantidad) => {
-    const item = ingredientesOlla.find(i => i.insumo.id === id);
-    if (item) {
-      const maximo = item.insumo.cantidad_actual;
-      let nuevaCantidad = parseFloat(cantidad.toString().replace(',', '.'));
-      if (isNaN(nuevaCantidad)) nuevaCantidad = 0;
-      if (nuevaCantidad > maximo) {
-        addToast(`⚠️ Solo tienes ${maximo} ${item.insumo.unidad_medida} de ${item.insumo.nombre}.`, 'error');
-        if (playSound) playSound('alert');
-        return;
-      }
-    }
-    setIngredientesOlla(ingredientesOlla.map(item => 
-      item.insumo.id === id ? { ...item, cantidadUsada: cantidad } : item
-    ));
-  };
-
-  const sacarDeLaOlla = (id) => {
-    setIngredientesOlla(ingredientesOlla.filter(item => item.insumo.id !== id));
-  };
-
-  const costoIngredientesUsd = ingredientesOlla.reduce((acc, item) => {
-    const cant = parseFloat(item.cantidadUsada.toString().replace(',', '.')) || 0;
-    const costoUnitario = item.insumo.costo_usd / item.insumo.cantidad_actual;
-    return acc + (costoUnitario * cant);
-  }, 0);
-
+  // Cálculos basados en el hook
   const montoOperativoUsd = costoIngredientesUsd * (porcentajeOperativo / 100);
   const costoTotalOllaUsd = costoIngredientesUsd + montoOperativoUsd;
-  const costoTotalOllaBs = costoTotalOllaUsd * (tasaBcv || 1);
   const costoPorPorcionUsd = rendimiento > 0 ? (costoTotalOllaUsd / parseInt(rendimiento)) : 0;
-  const costoPorPorcionBs = costoPorPorcionUsd * (tasaBcv || 1);
   const precioSugeridoUsd = costoPorPorcionUsd * 1.30;
 
-  useEffect(() => {
-    if (rendimiento > 0 && !precioVentaUsd) {
-      const usd = precioSugeridoUsd.toFixed(2);
-      setPrecioVentaUsd(usd);
-      setPrecioVentaBs((parseFloat(usd) * (tasaBcv || 1)).toFixed(2));
-    }
-  }, [rendimiento, porcentajeOperativo]);
+  // Efecto para sugerir precio
+  if (rendimiento > 0 && !precioVentaUsd) {
+    const usd = precioSugeridoUsd.toFixed(2);
+    setPrecioVentaUsd(usd);
+    setPrecioVentaBs((parseFloat(usd) * (tasaBcv || 1)).toFixed(2));
+  }
 
   const handleUsdChange = (value) => {
     const raw = value.replace(',', '.');
     setPrecioVentaUsd(value);
     const num = parseFloat(raw);
-    if (!isNaN(num)) {
-      const tasa = tasaBcv || 1;
-      setPrecioVentaBs((num * tasa).toFixed(2));
-    } else {
-      setPrecioVentaBs('');
-    }
+    setPrecioVentaBs(!isNaN(num) ? (num * (tasaBcv || 1)).toFixed(2) : '');
   };
 
   const handleBsChange = (value) => {
     const raw = value.replace(',', '.');
     setPrecioVentaBs(value);
     const num = parseFloat(raw);
-    if (!isNaN(num)) {
-      const tasa = tasaBcv || 1;
-      if (tasa > 0) {
-        setPrecioVentaUsd((num / tasa).toFixed(2));
-      } else {
-        setPrecioVentaUsd('');
-      }
-    } else {
-      setPrecioVentaUsd('');
-    }
+    if (!isNaN(num) && tasaBcv) setPrecioVentaUsd((num / tasaBcv).toFixed(2));
   };
 
-  const enviarANevera = async () => {
-    if (!nombreProducto || !rendimiento || !precioVentaUsd) {
-      addToast("Por favor ponle nombre, cuántos salieron y el precio de venta.", 'error');
-      return;
-    }
-    
+  const handleGuardar = async () => {
     setGuardando(true);
-    try {
-      let currentUserId = usuario?.id;
-      if (!currentUserId) {
-        const { data: { session } } = await supabase.auth.getSession();
-        currentUserId = session.user.id;
-      }
-
-      for (const item of ingredientesOlla) {
-        const cantUsada = parseFloat(item.cantidadUsada.toString().replace(',', '.')) || 0;
-        const stockRestante = item.insumo.cantidad_actual - cantUsada;
-        await supabase.from('insumos')
-          .update({ cantidad_actual: stockRestante > 0 ? stockRestante : 0 })
-          .eq('id', item.insumo.id);
-      }
-
-      const productoData = {
-        user_id: currentUserId,
-        nombre: nombreProducto,
-        precio_venta_usd: parseFloat(precioVentaUsd.toString().replace(',', '.')),
-        stock_actual: parseInt(rendimiento),
-        categoria: tipoPreparacion === 'congelador' ? 'congelador' : (tipoPreparacion === 'olla' ? 'frio' : 'mostrador')
-      };
-
-      if (tipoPreparacion === 'congelador') {
-        productoData.temp_congelado = tempCongelado || null;
-        productoData.tiempo_congelado = tiempoCongelado || null;
-        productoData.requiere_palito = requierePalito;
-      }
-
-      const { error: insertError } = await supabase.from('productos').insert([productoData]);
-      if (insertError) throw insertError;
-
-      if (guardarComoReceta && nombreReceta.trim()) {
-        const { data: receta, error: recetaError } = await supabase
-          .from('recetas')
-          .insert({
-            user_id: currentUserId,
-            nombre: nombreReceta.trim(),
-            rendimiento: parseInt(rendimiento)
-          })
-          .select()
-          .single();
-        if (!recetaError && receta) {
-          for (const item of ingredientesOlla) {
-            const cantUsada = parseFloat(item.cantidadUsada.toString().replace(',', '.')) || 0;
-            await supabase.from('recetas_ingredientes').insert({
-              receta_id: receta.id,
-              insumo_id: item.insumo.id,
-              cantidad_necesaria: cantUsada,
-              unidad_medida: item.insumo.unidad_medida
-            });
-          }
-          addToast(`📖 Receta "${nombreReceta}" guardada.`, 'success');
-          cargarRecetas(); // refrescar lista
-        }
-      }
-
-      setIngredientesOlla([]);
-      setRendimiento('');
-      setNombreProducto('');
-      setPrecioVentaUsd('');
-      setPrecioVentaBs('');
-      setPaso(1);
-      setPorcentajeOperativo(15);
-      setModoAvanzadoOperativo(false);
-      setTempCongelado('');
-      setTiempoCongelado('');
-      setRequierePalito(false);
-      setGuardarComoReceta(false);
-      setNombreReceta('');
-      
-      await cargarAlacena();
-      
-      incrementarRacha('cocina');
-      notificarCocina({ nombre: nombreProducto });
-      if (playSound) playSound('kitchen_bell');
-      addToast("¡Éxito! Postres guardados en Mi Nevera y materiales descontados de la Alacena.", 'success');
-    } catch (error) {
-      addToast("Error al guardar: " + error.message, 'error');
-      if (playSound) playSound('alert');
-    } finally {
-      setGuardando(false);
+    const ok = await enviarANevera({
+      nombreProducto, rendimiento, precioVentaUsd, tipoPreparacion,
+      tempCongelado, tiempoCongelado, requierePalito, guardarComoReceta, nombreReceta,
+    });
+    if (ok) {
+      setRendimiento(''); setNombreProducto(''); setPrecioVentaUsd(''); setPrecioVentaBs('');
+      setPaso(1); setPorcentajeOperativo(15); setModoAvanzadoOperativo(false);
+      setTempCongelado(''); setTiempoCongelado(''); setRequierePalito(false);
+      setGuardarComoReceta(false); setNombreReceta('');
     }
+    setGuardando(false);
   };
 
-  if (cargando) return <div className="flex justify-center items-center h-64"><Loader2 className="w-8 h-8 animate-spin text-amber-500" /></div>;
+  if (cargandoAlacena) return <div className="flex justify-center items-center h-64"><Loader2 className="w-8 h-8 animate-spin text-amber-500" /></div>;
 
   return (
     <div className="space-y-4 font-sans pb-24">
+      {/* Header */}
       <div className="bg-amber-50 rounded-3xl p-4 shadow-sm flex items-center gap-3 border border-amber-100">
         <div className="text-3xl animate-bounce">👨🏻‍🍳</div>
         <div className="flex-1">
           <p className="text-xs font-black uppercase tracking-widest text-amber-600">Maxi Chef</p>
           <p className="text-sm font-bold text-slate-700 leading-tight mt-0.5">
-            {subPestaña === 'preparar' 
-              ? (paso === 1 ? "Echa los ingredientes a la olla" : "Dime cuántos salieron")
-              : "Tus recetas guardadas"}
+            {subPestaña === 'preparar' ? (paso === 1 ? "Echa los ingredientes a la olla" : "Dime cuántos salieron") : "Tus recetas guardadas"}
           </p>
         </div>
       </div>
 
       {/* Pestañas internas */}
       <div className="flex gap-2 bg-white p-1 rounded-2xl shadow-sm border border-slate-100">
-        <button
-          onClick={() => { setSubPestaña('preparar'); setPaso(1); }}
-          className={`flex-1 py-2 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${subPestaña === 'preparar' ? 'bg-amber-100 text-amber-700' : 'text-slate-400 bg-slate-50'}`}
-        >
+        <button onClick={() => { setSubPestaña('preparar'); setPaso(1); }} className={`flex-1 py-2 rounded-xl font-black text-sm flex items-center justify-center gap-2 ${subPestaña === 'preparar' ? 'bg-amber-100 text-amber-700' : 'text-slate-400 bg-slate-50'}`}>
           <Soup className="w-5 h-5"/> Preparar
         </button>
-        <button
-          onClick={() => setSubPestaña('misRecetas')}
-          className={`flex-1 py-2 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${subPestaña === 'misRecetas' ? 'bg-purple-100 text-purple-700' : 'text-slate-400 bg-slate-50'}`}
-        >
+        <button onClick={() => setSubPestaña('misRecetas')} className={`flex-1 py-2 rounded-xl font-black text-sm flex items-center justify-center gap-2 ${subPestaña === 'misRecetas' ? 'bg-purple-100 text-purple-700' : 'text-slate-400 bg-slate-50'}`}>
           <BookMarked className="w-5 h-5"/> Mis Recetas
         </button>
       </div>
 
-      {/* Contenido de preparación */}
+      {/* Contenido preparación */}
       {subPestaña === 'preparar' && (
         <AnimatePresence mode="wait">
           {paso === 1 && (
             <motion.div key="paso1" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
               <div className="bg-white p-2 rounded-2xl flex gap-2 shadow-sm border border-slate-100">
-                <button onClick={() => setTipoPreparacion('olla')} className={`flex-1 py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${tipoPreparacion === 'olla' ? 'bg-amber-100 text-amber-700' : 'text-slate-400 bg-slate-50'}`}>
-                  <Soup className="w-5 h-5"/> Mezcla / Olla
-                </button>
-                <button onClick={() => setTipoPreparacion('bandeja')} className={`flex-1 py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${tipoPreparacion === 'bandeja' ? 'bg-orange-100 text-orange-700' : 'text-slate-400 bg-slate-50'}`}>
-                  <CakeSlice className="w-5 h-5"/> Masas / Horno
-                </button>
-                <button onClick={() => setTipoPreparacion('congelador')} className={`flex-1 py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${tipoPreparacion === 'congelador' ? 'bg-cyan-100 text-cyan-700' : 'text-slate-400 bg-slate-50'}`}>
-                  <IceCream className="w-5 h-5"/> Congelador
-                </button>
+                <button onClick={() => setTipoPreparacion('olla')} className={`flex-1 py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 ${tipoPreparacion === 'olla' ? 'bg-amber-100 text-amber-700' : 'text-slate-400 bg-slate-50'}`}><Soup className="w-5 h-5"/> Mezcla / Olla</button>
+                <button onClick={() => setTipoPreparacion('bandeja')} className={`flex-1 py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 ${tipoPreparacion === 'bandeja' ? 'bg-orange-100 text-orange-700' : 'text-slate-400 bg-slate-50'}`}><CakeSlice className="w-5 h-5"/> Masas / Horno</button>
+                <button onClick={() => setTipoPreparacion('congelador')} className={`flex-1 py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 ${tipoPreparacion === 'congelador' ? 'bg-cyan-100 text-cyan-700' : 'text-slate-400 bg-slate-50'}`}><IceCream className="w-5 h-5"/> Congelador</button>
               </div>
 
               <div className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 min-h-[200px] flex flex-col">
@@ -389,7 +136,7 @@ export default function LaCocina({ usuario, tasaBcv, playSound }) {
                           <p className="font-bold text-slate-700 text-sm truncate">{item.insumo.nombre}</p>
                           <div className="flex gap-2 mt-1">
                             <input type="text" inputMode="decimal" placeholder="Cant" value={item.cantidadUsada} onChange={(e) => actualizarCantidadUsada(item.insumo.id, e.target.value)} className="w-16 bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-amber-500" />
-                            <span className="text-[10px] font-bold text-slate-400 self-center uppercase truncate">{item.insumo.unidad_medida}</span>
+                            <span className="text-[10px] font-bold text-slate-400 self-center uppercase">{item.insumo.unidad_medida}</span>
                           </div>
                         </div>
                         <div className="text-right pr-2">
@@ -401,17 +148,13 @@ export default function LaCocina({ usuario, tasaBcv, playSound }) {
                     );
                   })}
                 </div>
-                <button onClick={() => setMostrarSelector(true)} className="w-full mt-4 border-2 border-dashed border-amber-200 text-amber-600 bg-amber-50 py-3 rounded-2xl font-black text-sm flex items-center justify-center gap-2 active:scale-95 transition-transform">
+                <button onClick={() => setMostrarSelector(true)} className="w-full mt-4 border-2 border-dashed border-amber-200 text-amber-600 bg-amber-50 py-3 rounded-2xl font-black text-sm flex items-center justify-center gap-2 active:scale-95">
                   <Plus className="w-5 h-5"/> AÑADIR INGREDIENTE
                 </button>
               </div>
 
               {ingredientesOlla.length > 0 && costoIngredientesUsd > 0 && (
-                <motion.button 
-                  initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
-                  onClick={() => setPaso(2)}
-                  className="w-full bg-slate-900 text-white font-black text-lg py-4 rounded-2xl shadow-xl shadow-slate-900/20 active:scale-95 transition-all flex items-center justify-center gap-2"
-                >
+                <motion.button initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} onClick={() => setPaso(2)} className="w-full bg-slate-900 text-white font-black text-lg py-4 rounded-2xl shadow-xl shadow-slate-900/20 active:scale-95 flex items-center justify-center gap-2">
                   SIGUIENTE PASO <ArrowRight className="w-5 h-5" />
                 </motion.button>
               )}
@@ -420,9 +163,7 @@ export default function LaCocina({ usuario, tasaBcv, playSound }) {
 
           {paso === 2 && (
             <motion.div key="paso2" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="space-y-4">
-              <button onClick={() => setPaso(1)} className="flex items-center gap-2 text-sm font-black text-slate-400 mb-2 active:text-slate-600">
-                <ArrowLeft className="w-4 h-4"/> Volver a la Preparación
-              </button>
+              <button onClick={() => setPaso(1)} className="flex items-center gap-2 text-sm font-black text-slate-400 mb-2"><ArrowLeft className="w-4 h-4"/> Volver a la Preparación</button>
 
               <div className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100 space-y-5">
                 <div>
@@ -441,14 +182,14 @@ export default function LaCocina({ usuario, tasaBcv, playSound }) {
                       <div><label className="text-[10px] font-bold text-cyan-700 block mb-1">Temp. de congelado</label><input type="text" placeholder="Ej: -18°C" value={tempCongelado} onChange={e => setTempCongelado(e.target.value)} className="w-full bg-white border border-cyan-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:border-cyan-500" /></div>
                       <div><label className="text-[10px] font-bold text-cyan-700 block mb-1">Tiempo de congelado</label><input type="text" placeholder="Ej: 4 horas" value={tiempoCongelado} onChange={e => setTiempoCongelado(e.target.value)} className="w-full bg-white border border-cyan-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:border-cyan-500" /></div>
                     </div>
-                    <label className="flex items-center gap-2 text-sm font-bold text-cyan-800"><input type="checkbox" checked={requierePalito} onChange={e => setRequierePalito(e.target.checked)} className="rounded border-cyan-300 text-cyan-600 focus:ring-cyan-500" /> Requiere palito</label>
+                    <label className="flex items-center gap-2 text-sm font-bold text-cyan-800"><input type="checkbox" checked={requierePalito} onChange={e => setRequierePalito(e.target.checked)} className="rounded" /> Requiere palito</label>
                   </div>
                 )}
 
                 <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100">
                   <div className="flex justify-between items-center mb-2">
-                    <label className="text-[11px] font-black text-blue-800 uppercase flex items-center gap-1"><Zap className="w-3 h-3"/> Costos Ocultos (Gas, Luz, Agua)</label>
-                    <button onClick={() => setModoAvanzadoOperativo(!modoAvanzadoOperativo)} className="text-[10px] font-black text-blue-500 uppercase underline active:text-blue-700">{modoAvanzadoOperativo ? 'Usar Recomendado' : 'Ajuste Avanzado'}</button>
+                    <label className="text-[11px] font-black text-blue-800 uppercase flex items-center gap-1"><Zap className="w-3 h-3"/> Costos Ocultos</label>
+                    <button onClick={() => setModoAvanzadoOperativo(!modoAvanzadoOperativo)} className="text-[10px] font-black text-blue-500 uppercase underline">{modoAvanzadoOperativo ? 'Usar Recomendado' : 'Ajuste Avanzado'}</button>
                   </div>
                   {!modoAvanzadoOperativo ? (
                     <div className="flex justify-between items-center bg-white border border-blue-200 p-2.5 rounded-xl shadow-sm"><span className="text-xs font-bold text-slate-500">Porcentaje Sugerido</span><span className="bg-blue-100 text-blue-700 font-black text-xs px-2 py-1 rounded-md">15%</span></div>
@@ -459,7 +200,7 @@ export default function LaCocina({ usuario, tasaBcv, playSound }) {
 
                 <div className="bg-purple-50 p-3 rounded-xl border border-purple-200">
                   <label className="flex items-center gap-2 text-sm font-bold text-purple-700"><input type="checkbox" checked={guardarComoReceta} onChange={e => setGuardarComoReceta(e.target.checked)} /> Guardar esta combinación como receta</label>
-                  {guardarComoReceta && <input type="text" placeholder="Nombre de la receta (ej. Mermelada de Fresa)" value={nombreReceta} onChange={e => setNombreReceta(e.target.value)} className="mt-2 w-full bg-white border border-purple-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-purple-500" />}
+                  {guardarComoReceta && <input type="text" placeholder="Nombre de la receta" value={nombreReceta} onChange={e => setNombreReceta(e.target.value)} className="mt-2 w-full bg-white border border-purple-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-purple-500" />}
                 </div>
               </div>
 
@@ -467,12 +208,12 @@ export default function LaCocina({ usuario, tasaBcv, playSound }) {
                 <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-slate-900 rounded-3xl p-5 shadow-xl text-white space-y-4">
                   <div className="space-y-2 border-b border-slate-700 pb-3">
                     <div className="flex justify-between items-center"><span className="text-slate-400 font-medium text-xs">Materia Prima:</span><span className="text-slate-300 font-bold text-sm">${costoIngredientesUsd.toFixed(2)}</span></div>
-                    <div className="flex justify-between items-center"><span className="text-slate-400 font-medium text-xs">Extras (Gas, Luz, etc):</span><span className="text-slate-300 font-bold text-sm">+ ${montoOperativoUsd.toFixed(2)}</span></div>
+                    <div className="flex justify-between items-center"><span className="text-slate-400 font-medium text-xs">Extras:</span><span className="text-slate-300 font-bold text-sm">+ ${montoOperativoUsd.toFixed(2)}</span></div>
                     <div className="flex justify-between items-center pt-2 mt-2 border-t border-slate-800"><span className="text-slate-200 font-black text-sm">COSTO TOTAL RECETA:</span><span className="text-amber-400 font-black text-lg">${costoTotalOllaUsd.toFixed(2)}</span></div>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-emerald-400 font-bold text-sm">Costo Real por Unidad:</span>
-                    <div className="text-right"><span className="block text-3xl font-black text-white leading-none">${costoPorPorcionUsd.toFixed(2)}</span><span className="text-xs font-bold text-emerald-300/50">{costoPorPorcionBs.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs</span></div>
+                    <div className="text-right"><span className="block text-3xl font-black text-white leading-none">${costoPorPorcionUsd.toFixed(2)}</span><span className="text-xs font-bold text-emerald-300/50">{(costoPorPorcionUsd * (tasaBcv || 1)).toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs</span></div>
                   </div>
                   <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 mt-2">
                     <div className="flex justify-between items-center mb-3 border-b border-slate-700 pb-2"><span className="text-xs font-bold text-slate-400 uppercase">Sugerido (30%+)</span><span className="text-base font-black text-slate-300">${precioSugeridoUsd.toFixed(2)}</span></div>
@@ -483,7 +224,7 @@ export default function LaCocina({ usuario, tasaBcv, playSound }) {
                     </div>
                     <p className="text-[10px] text-slate-500 mt-1 text-center">Tasa: {tasaBcv?.toFixed(2) || '---'} Bs/$</p>
                   </div>
-                  <button onClick={enviarANevera} disabled={guardando} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black text-lg py-4 rounded-2xl shadow-lg shadow-blue-500/30 active:scale-95 transition-all flex justify-center items-center gap-2 mt-4">
+                  <button onClick={handleGuardar} disabled={guardando} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black text-lg py-4 rounded-2xl shadow-lg shadow-blue-500/30 active:scale-95 transition-all flex justify-center items-center gap-2 mt-4">
                     {guardando ? <Loader2 className="w-6 h-6 animate-spin" /> : <><Store className="w-6 h-6" /> GUARDAR EN MI NEVERA</>}
                   </button>
                 </motion.div>
@@ -502,7 +243,6 @@ export default function LaCocina({ usuario, tasaBcv, playSound }) {
             <div className="bg-white rounded-3xl p-8 text-center border border-dashed border-slate-200">
               <BookMarked className="w-12 h-12 mx-auto text-slate-300 mb-2" />
               <p className="text-slate-400 font-medium">No tienes recetas guardadas</p>
-              <p className="text-xs text-slate-400 mt-1">Prepara algo y marca la opción "Guardar como receta".</p>
             </div>
           ) : (
             recetas.map(receta => (
@@ -512,18 +252,8 @@ export default function LaCocina({ usuario, tasaBcv, playSound }) {
                   <p className="text-xs text-slate-500">Rendimiento: {receta.rendimiento || '?'} unidades</p>
                 </div>
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => cargarRecetaCompleta(receta.id)}
-                    className="px-3 py-2 bg-blue-500 text-white rounded-xl font-bold text-sm flex items-center gap-1"
-                  >
-                    <FolderOpen className="w-4 h-4"/> Usar
-                  </button>
-                  <button
-                    onClick={() => eliminarReceta(receta.id)}
-                    className="p-2 text-red-500 hover:bg-red-50 rounded-xl"
-                  >
-                    <Trash2 className="w-5 h-5"/>
-                  </button>
+                  <button onClick={() => { cargarRecetaCompleta(receta.id); setSubPestaña('preparar'); setPaso(1); }} className="px-3 py-2 bg-blue-500 text-white rounded-xl font-bold text-sm flex items-center gap-1"><FolderOpen className="w-4 h-4"/> Usar</button>
+                  <button onClick={() => handleEliminarReceta(receta.id)} className="p-2 text-red-500 hover:bg-red-50 rounded-xl"><Trash2 className="w-5 h-5"/></button>
                 </div>
               </div>
             ))
@@ -536,11 +266,16 @@ export default function LaCocina({ usuario, tasaBcv, playSound }) {
         {mostrarSelector && (
           <>
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-slate-900/60 z-[60] max-w-md mx-auto backdrop-blur-sm" onClick={() => setMostrarSelector(false)} />
-            <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 250 }} className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[2.5rem] shadow-[0_-10px_40px_rgba(0,0,0,0.2)] z-[70] p-6 pb-8 h-[70vh] flex flex-col">
+            <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 250 }} className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[2.5rem] shadow-2xl z-[70] p-6 pb-8 h-[70vh] flex flex-col">
               <div className="flex justify-between items-center mb-4 shrink-0"><h3 className="font-black text-xl text-slate-800">Tu Alacena</h3><button onClick={() => setMostrarSelector(false)} className="bg-slate-100 p-2 rounded-full text-slate-500 active:scale-90"><X className="w-5 h-5"/></button></div>
               <div className="overflow-y-auto flex-1 space-y-2 pr-2">
-                {alacena.length === 0 ? (<div className="text-center mt-10"><p className="text-slate-400 font-bold text-sm">Tu alacena está vacía.</p></div>) : (
-                  alacena.map(item => (<button key={item.id} onClick={() => agregarALaOlla(item)} className="w-full text-left bg-slate-50 p-3 rounded-2xl border border-slate-100 flex justify-between items-center active:bg-amber-50"><span className="font-bold text-slate-700">{item.nombre}</span><span className="text-xs font-black text-slate-400 bg-white px-2 py-1 rounded-md">{item.cantidad_actual} {item.unidad_medida} disp.</span></button>))
+                {alacena.length === 0 ? (<p className="text-slate-400 text-center">Alacena vacía</p>) : (
+                  alacena.map(item => (
+                    <button key={item.id} onClick={() => { agregarALaOlla(item); setMostrarSelector(false); }} className="w-full text-left bg-slate-50 p-3 rounded-2xl border border-slate-100 flex justify-between items-center active:bg-amber-50">
+                      <span className="font-bold text-slate-700">{item.nombre}</span>
+                      <span className="text-xs font-black text-slate-400 bg-white px-2 py-1 rounded-md">{item.cantidad_actual} {item.unidad_medida} disp.</span>
+                    </button>
+                  ))
                 )}
               </div>
             </motion.div>

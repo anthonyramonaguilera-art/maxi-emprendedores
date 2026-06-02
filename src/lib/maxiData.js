@@ -36,6 +36,10 @@ export const eventosMensajes = {
     mensaje: () => '¡Te extrañé! Retoma tu negocio con alegría. Nunca es tarde para empezar de nuevo.',
     versiculo: '“No te deleites en el sueño, para que no te empobrezcas; abre tus ojos, y te saciarás de pan.” (Proverbios 20:13)',
   },
+  racha_perdida: {
+  mensaje: () => 'No te preocupes. Cada día es una nueva oportunidad. El Señor renueva sus misericordias cada mañana.',
+  versiculo: '“Nuevas son cada mañana; grande es tu fidelidad.” (Lamentaciones 3:22-23)',
+},
 };
 
 // Consejos del día (para cuando el usuario hace clic en Maxi sin eventos)
