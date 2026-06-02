@@ -4,6 +4,7 @@ import { Settings, Store, MessageSquare, Save, Loader2, UploadCloud, CheckCircle
 import { useStore } from '@nanostores/react';
 import { tasaBcvStore, actualizarTasaBcv, origenTasaStore } from '../store/configStore';
 import { addToast } from '../store/toastStore'; // ✅ NUEVO
+import { maxiVisible } from '../store/maxiStore';
 
 const LOGOS_PREDETERMINADOS = [
   "https://api.dicebear.com/7.x/initials/svg?seed=MX&backgroundColor=2563eb",
@@ -16,7 +17,11 @@ export default function ModuloConfiguracion({ usuario }) {
   const [cargando, setCargando] = useState(true);
   const [procesando, setProcesando] = useState(false);
   const [cargandoOficial, setCargandoOficial] = useState(false);
-
+// Al inicio del componente, después de las declaraciones:
+useEffect(() => {
+  const saved = localStorage.getItem('maxi_visible');
+  if (saved !== null) maxiVisible.set(saved === 'true');
+}, []);
   const tasaGlobal = useStore(tasaBcvStore);
   const origenGlobal = useStore(origenTasaStore);
   const [inputTasa, setInputTasa] = useState('');
@@ -208,6 +213,29 @@ export default function ModuloConfiguracion({ usuario }) {
             {origenGlobal === 'oficial' ? '✅ Usando tasa oficial del BCV' : '✏️ Usando tasa manual ingresada'}
           </p>
         </div>
+
+        {/* Toggle para mostrar/ocultar Maxi */}
+<div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+  <div className="flex items-center justify-between">
+    <div>
+      <label className="text-sm font-black text-slate-700">Mostrar a Maxi</label>
+      <p className="text-xs text-slate-400">El asistente te motivará con versículos bíblicos</p>
+    </div>
+    <button
+      type="button"
+      onClick={() => {
+        const newValue = !maxiVisible.get();
+        maxiVisible.set(newValue);
+        localStorage.setItem('maxi_visible', newValue);
+      }}
+      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${maxiVisible.get() ? 'bg-blue-600' : 'bg-gray-300'}`}
+    >
+
+      
+      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${maxiVisible.get() ? 'translate-x-6' : 'translate-x-1'}`} />
+    </button>
+  </div>
+</div>
 
         <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 space-y-8">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

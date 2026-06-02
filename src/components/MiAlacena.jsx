@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
-import { Plus, Trash2, Edit2, Package, Loader2, X, UploadCloud, Image as ImageIcon, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, Edit2, Package, Loader2, X, UploadCloud, Image as ImageIcon, AlertTriangle, Archive, ArchiveRestore, PlusCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { addToast } from '../store/toastStore';
+import { notificarStockBajo } from '../lib/maxiEventEmitter';
 
 const avatarColors = [
   'bg-emerald-100 text-emerald-700',
@@ -23,12 +24,14 @@ function getColorFromName(name) {
   return avatarColors[Math.abs(hash) % avatarColors.length];
 }
 
-export default function MiAlacena({ usuario, tasaBcv }) {
+export default function MiAlacena({ usuario, tasaBcv, playSound }) {
   const [insumos, setInsumos] = useState([]);
+  const [insumosArchivados, setInsumosArchivados] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [mostrarModal, setMostrarModal] = useState(false);
   const [modoEdicion, setModoEdicion] = useState(null);
   const [guardando, setGuardando] = useState(false);
+  const [mostrarArchivados, setMostrarArchivados] = useState(false);
 
   const [nombre, setNombre] = useState('');
   const [cantidad, setCantidad] = useState('');
@@ -45,15 +48,6 @@ export default function MiAlacena({ usuario, tasaBcv }) {
     cargarInsumos();
   }, [usuario]);
 
-  useEffect(() => {
-    if (insumos.length > 0) {
-      const stockBajoCount = insumos.filter(i => i.cantidad_actual <= 5).length;
-      if (stockBajoCount > 0) {
-        addToast(`⚠️ Tienes ${stockBajoCount} insumo${stockBajoCount !== 1 ? 's' : ''} con stock bajo. Revisa la alacena.`, 'info');
-      }
-    }
-  }, [insumos]);
-
   const cargarInsumos = async () => {
     let currentUserId = usuario?.id;
     if (!currentUserId) {
@@ -64,21 +58,34 @@ export default function MiAlacena({ usuario, tasaBcv }) {
 
     setCargando(true);
     try {
-      const { data, error } = await supabase
+      const { data: activos, error } = await supabase
         .from('insumos')
         .select('*')
         .eq('user_id', currentUserId)
+        .eq('archivado', false)
         .order('nombre', { ascending: true });
       if (error) throw error;
-      setInsumos(data || []);
+      setInsumos(activos || []);
+
+      const { data: archivados } = await supabase
+        .from('insumos')
+        .select('*')
+        .eq('user_id', currentUserId)
+        .eq('archivado', true)
+        .order('nombre', { ascending: true });
+      setInsumosArchivados(archivados || []);
     } catch (error) {
       console.error(error);
+      addToast('Error al cargar insumos', 'error');
     } finally {
       setCargando(false);
     }
   };
 
-  const obtenerPrecioUnitario = (insumo) => insumo.costo_usd / insumo.cantidad_actual;
+  const obtenerPrecioUnitario = (insumo) => {
+    if (insumo.cantidad_actual === 0) return null;
+    return insumo.costo_usd / insumo.cantidad_actual;
+  };
 
   const insumosOrdenados = useMemo(() => {
     if (!insumos.length) return [];
@@ -90,17 +97,17 @@ export default function MiAlacena({ usuario, tasaBcv }) {
       case 'nombre-desc':
         return copy.sort((a, b) => b.nombre.localeCompare(a.nombre));
       case 'precio-asc':
-        return copy.sort((a, b) => obtenerPrecioUnitario(a) - obtenerPrecioUnitario(b));
+        return copy.sort((a, b) => (obtenerPrecioUnitario(a) || Infinity) - (obtenerPrecioUnitario(b) || Infinity));
       case 'precio-desc':
-        return copy.sort((a, b) => obtenerPrecioUnitario(b) - obtenerPrecioUnitario(a));
+        return copy.sort((a, b) => (obtenerPrecioUnitario(b) || -Infinity) - (obtenerPrecioUnitario(a) || -Infinity));
       case 'cantidad-asc':
         return copy.sort((a, b) => a.cantidad_actual - b.cantidad_actual);
       case 'cantidad-desc':
         return copy.sort((a, b) => b.cantidad_actual - a.cantidad_actual);
       case 'fecha-asc':
-        return copy.sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
+        return copy.sort((a, b) => new Date(a.fecha_ingreso || 0) - new Date(b.fecha_ingreso || 0));
       case 'fecha-desc':
-        return copy.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+        return copy.sort((a, b) => new Date(b.fecha_ingreso || 0) - new Date(a.fecha_ingreso || 0));
       default:
         return copy;
     }
@@ -197,18 +204,9 @@ export default function MiAlacena({ usuario, tasaBcv }) {
         const fileName = `${currentUserId}-${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
         const { error: uploadError } = await supabase.storage
           .from('insumos')
-          .upload(fileName, imagenArchivo, {
-            cacheControl: '3600',
-            upsert: false,
-          });
-        if (uploadError) {
-          addToast('Error al subir imagen: ' + uploadError.message, 'error');
-          setGuardando(false);
-          return;
-        }
-        const { data: publicUrlData } = supabase.storage
-          .from('insumos')
-          .getPublicUrl(fileName);
+          .upload(fileName, imagenArchivo, { cacheControl: '3600', upsert: false });
+        if (uploadError) throw new Error("Error al subir imagen.");
+        const { data: publicUrlData } = supabase.storage.from('insumos').getPublicUrl(fileName);
         imagenFinalUrl = publicUrlData.publicUrl;
       }
 
@@ -226,11 +224,14 @@ export default function MiAlacena({ usuario, tasaBcv }) {
           .update(insumoData)
           .eq('id', modoEdicion.id);
         if (error) throw error;
+        addToast('Insumo actualizado', 'success');
       } else {
         const { error } = await supabase
           .from('insumos')
-          .insert([{ ...insumoData, user_id: currentUserId }]);
+          .insert([{ ...insumoData, user_id: currentUserId, archivado: false }]);
         if (error) throw error;
+        addToast('Insumo creado', 'success');
+        if (playSound) playSound('coin_drop');
       }
 
       setNombre('');
@@ -243,20 +244,80 @@ export default function MiAlacena({ usuario, tasaBcv }) {
       setMostrarModal(false);
       setModoEdicion(null);
       await cargarInsumos();
-      addToast(modoEdicion ? 'Insumo actualizado' : 'Insumo creado', 'success');
     } catch (error) {
       addToast('Error al guardar: ' + error.message, 'error');
+      if (playSound) playSound('alert');
     } finally {
       setGuardando(false);
     }
   };
 
   const eliminarInsumo = async (id) => {
-    if (window.confirm('¿Eliminar este insumo?')) {
+    if (window.confirm('¿Eliminar este insumo permanentemente?')) {
       await supabase.from('insumos').delete().eq('id', id);
       await cargarInsumos();
+      addToast('Insumo eliminado', 'info');
     }
   };
+
+  const agregarCantidad = async (insumo) => {
+    const cantidadExtra = prompt(`¿Cuántos ${insumo.unidad_medida} de ${insumo.nombre} quieres agregar?`, '0');
+    if (cantidadExtra === null) return;
+    const extra = parseFloat(cantidadExtra.toString().replace(',', '.'));
+    if (isNaN(extra) || extra <= 0) {
+      addToast('Cantidad inválida', 'error');
+      return;
+    }
+    const nuevaCantidad = insumo.cantidad_actual + extra;
+    const { error } = await supabase
+      .from('insumos')
+      .update({ cantidad_actual: nuevaCantidad })
+      .eq('id', insumo.id);
+    if (error) {
+      addToast('Error al agregar cantidad', 'error');
+    } else {
+      addToast(`✅ Se agregaron ${extra} ${insumo.unidad_medida} a ${insumo.nombre}`, 'success');
+      if (playSound) playSound('coin_drop');
+      cargarInsumos();
+    }
+  };
+
+  const archivarInsumo = async (insumo) => {
+    if (window.confirm(`¿Archivar ${insumo.nombre}? Los insumos archivados no aparecerán en la alacena principal.`)) {
+      const { error } = await supabase
+        .from('insumos')
+        .update({ archivado: true })
+        .eq('id', insumo.id);
+      if (error) {
+        addToast('Error al archivar', 'error');
+      } else {
+        addToast(`📦 ${insumo.nombre} archivado`, 'info');
+        cargarInsumos();
+      }
+    }
+  };
+
+  const restaurarInsumo = async (insumo) => {
+    const { error } = await supabase
+      .from('insumos')
+      .update({ archivado: false })
+      .eq('id', insumo.id);
+    if (error) {
+      addToast('Error al restaurar', 'error');
+    } else {
+      addToast(`♻️ ${insumo.nombre} restaurado a la alacena`, 'success');
+      cargarInsumos();
+    }
+  };
+
+  // Notificar a Maxi sobre stock bajo
+  useEffect(() => {
+    insumos.forEach(insumo => {
+      if (insumo.cantidad_actual <= 5) {
+        notificarStockBajo({ nombre: insumo.nombre, cantidad: insumo.cantidad_actual, unidad: insumo.unidad_medida });
+      }
+    });
+  }, [insumos]);
 
   if (cargando) {
     return (
@@ -276,25 +337,34 @@ export default function MiAlacena({ usuario, tasaBcv }) {
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
-        <label htmlFor="sort-alacena" className="text-xs font-bold text-slate-500 uppercase tracking-wider">Ordenar:</label>
-        <select
-          id="sort-alacena"
-          value={sortKey}
-          onChange={(e) => setSortKey(e.target.value)}
-          className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-emerald-500 shadow-sm"
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
+          <label htmlFor="sort-alacena" className="text-xs font-bold text-slate-500 uppercase tracking-wider">Ordenar:</label>
+          <select
+            id="sort-alacena"
+            value={sortKey}
+            onChange={(e) => setSortKey(e.target.value)}
+            className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-emerald-500 shadow-sm"
+          >
+            <option value="nombre-asc">Nombre (A-Z)</option>
+            <option value="nombre-desc">Nombre (Z-A)</option>
+            <option value="precio-asc">Precio / unidad (Menor a Mayor)</option>
+            <option value="precio-desc">Precio / unidad (Mayor a Menor)</option>
+            <option value="cantidad-desc">Cantidad (Mayor a Menor)</option>
+            <option value="cantidad-asc">Cantidad (Menor a Mayor)</option>
+            <option value="fecha-desc">Más reciente primero</option>
+            <option value="fecha-asc">Más antiguo primero</option>
+          </select>
+        </div>
+        <button
+          onClick={() => setMostrarArchivados(!mostrarArchivados)}
+          className="text-xs font-bold text-slate-500 bg-slate-100 px-3 py-1 rounded-full flex items-center gap-1"
         >
-          <option value="nombre-asc">Nombre (A-Z)</option>
-          <option value="nombre-desc">Nombre (Z-A)</option>
-          <option value="precio-asc">Precio / unidad (Menor a Mayor)</option>
-          <option value="precio-desc">Precio / unidad (Mayor a Menor)</option>
-          <option value="cantidad-desc">Cantidad (Mayor a Menor)</option>
-          <option value="cantidad-asc">Cantidad (Menor a Mayor)</option>
-          <option value="fecha-desc">Más reciente primero</option>
-          <option value="fecha-asc">Más antiguo primero</option>
-        </select>
+          <Archive className="w-3 h-3" /> {mostrarArchivados ? 'Ocultar archivados' : 'Mostrar archivados'}
+        </button>
       </div>
 
+      {/* Lista de insumos activos */}
       <div className="space-y-3">
         {insumosOrdenados.length === 0 ? (
           <div className="bg-white rounded-3xl p-8 text-center border border-dashed border-slate-200">
@@ -304,19 +374,15 @@ export default function MiAlacena({ usuario, tasaBcv }) {
           </div>
         ) : (
           insumosOrdenados.map((insumo) => {
-            const costoUnitarioUsd = insumo.costo_usd / insumo.cantidad_actual;
-            const costoUnitarioBs = costoUnitarioUsd * (tasaBcv || 1);
+            const costoUnitarioUsd = obtenerPrecioUnitario(insumo);
+            const costoUnitarioBs = costoUnitarioUsd ? costoUnitarioUsd * (tasaBcv || 1) : 0;
             const avatarColor = getColorFromName(insumo.nombre);
             const isLowStock = insumo.cantidad_actual <= 5;
 
             return (
               <div key={insumo.id} className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 flex items-center gap-3">
                 {insumo.imagen_url ? (
-                  <img
-                    src={insumo.imagen_url}
-                    alt={insumo.nombre}
-                    className="w-10 h-10 rounded-full object-cover border border-slate-200 flex-shrink-0"
-                  />
+                  <img src={insumo.imagen_url} alt={insumo.nombre} className="w-10 h-10 rounded-full object-cover border border-slate-200 flex-shrink-0" />
                 ) : (
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${avatarColor}`}>
                     {insumo.nombre.substring(0, 2).toUpperCase()}
@@ -327,10 +393,7 @@ export default function MiAlacena({ usuario, tasaBcv }) {
                   <div className="flex items-center gap-2">
                     <h3 className="font-black text-slate-800">{insumo.nombre}</h3>
                     {isLowStock && (
-                      <span
-                        className="inline-flex items-center gap-1 bg-amber-100 text-amber-700 text-[10px] font-black px-2 py-0.5 rounded-full"
-                        title="Stock bajo, ¡reabastece pronto!"
-                      >
+                      <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-700 text-[10px] font-black px-2 py-0.5 rounded-full" title="Stock bajo, ¡reabastece pronto!">
                         <AlertTriangle className="w-3 h-3" />
                         Stock bajo
                       </span>
@@ -338,23 +401,27 @@ export default function MiAlacena({ usuario, tasaBcv }) {
                   </div>
                   <div className="flex gap-3 mt-1 flex-wrap">
                     <span className="text-xs font-bold text-slate-400">{insumo.cantidad_actual} {insumo.unidad_medida}</span>
-                    <span className="text-xs font-bold text-emerald-600">${costoUnitarioUsd.toFixed(2)} / unidad</span>
-                    <span className="text-[10px] font-bold text-slate-400">{costoUnitarioBs.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs</span>
+                    {costoUnitarioUsd !== null ? (
+                      <>
+                        <span className="text-xs font-bold text-emerald-600">${costoUnitarioUsd.toFixed(2)} / unidad</span>
+                        <span className="text-[10px] font-bold text-slate-400">{costoUnitarioBs.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs</span>
+                      </>
+                    ) : (
+                      <span className="text-xs font-bold text-red-500">Agotado</span>
+                    )}
                   </div>
                 </div>
                 <div className="flex gap-1 flex-shrink-0">
-                  <button
-                    onClick={() => abrirModalEditar(insumo)}
-                    className="p-2 text-blue-500 hover:bg-blue-50 rounded-xl active:scale-90 transition-all"
-                    title="Editar"
-                  >
+                  <button onClick={() => agregarCantidad(insumo)} className="p-2 text-emerald-500 hover:bg-emerald-50 rounded-xl active:scale-90 transition-all" title="Agregar cantidad">
+                    <PlusCircle className="w-5 h-5" />
+                  </button>
+                  <button onClick={() => archivarInsumo(insumo)} className="p-2 text-slate-400 hover:text-amber-600 rounded-xl active:scale-90 transition-all" title="Archivar">
+                    <Archive className="w-5 h-5" />
+                  </button>
+                  <button onClick={() => abrirModalEditar(insumo)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-xl active:scale-90 transition-all" title="Editar">
                     <Edit2 className="w-5 h-5" />
                   </button>
-                  <button
-                    onClick={() => eliminarInsumo(insumo.id)}
-                    className="p-2 text-slate-400 hover:text-red-500 rounded-xl active:scale-90 transition-all"
-                    title="Eliminar"
-                  >
+                  <button onClick={() => eliminarInsumo(insumo.id)} className="p-2 text-slate-400 hover:text-red-500 rounded-xl active:scale-90 transition-all" title="Eliminar">
                     <Trash2 className="w-5 h-5" />
                   </button>
                 </div>
@@ -364,63 +431,45 @@ export default function MiAlacena({ usuario, tasaBcv }) {
         )}
       </div>
 
-      <button
-        onClick={abrirModalNuevo}
-        className="fixed bottom-20 left-1/2 -translate-x-1/2 w-14 h-14 bg-emerald-500 text-white rounded-full shadow-lg shadow-emerald-200 flex items-center justify-center active:scale-95 transition-transform z-30"
-        style={{ left: 'calc(50% + 120px)' }}
-      >
+      {/* Lista de insumos archivados (condicional) */}
+      {mostrarArchivados && insumosArchivados.length > 0 && (
+        <div className="mt-6 border-t border-slate-200 pt-4">
+          <h3 className="text-sm font-black text-slate-500 mb-3 uppercase tracking-wider">Archivados</h3>
+          <div className="space-y-2">
+            {insumosArchivados.map((insumo) => (
+              <div key={insumo.id} className="bg-slate-50 rounded-2xl p-3 flex items-center justify-between">
+                <div>
+                  <p className="font-bold text-slate-600">{insumo.nombre}</p>
+                  <p className="text-xs text-slate-400">{insumo.cantidad_actual} {insumo.unidad_medida}</p>
+                </div>
+                <button onClick={() => restaurarInsumo(insumo)} className="text-blue-500 bg-white p-2 rounded-xl shadow-sm flex items-center gap-1 text-xs font-bold">
+                  <ArchiveRestore className="w-4 h-4" /> Restaurar
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <button onClick={abrirModalNuevo} className="fixed bottom-20 left-1/2 -translate-x-1/2 w-14 h-14 bg-emerald-500 text-white rounded-full shadow-lg shadow-emerald-200 flex items-center justify-center active:scale-95 transition-transform z-30" style={{ left: 'calc(50% + 120px)' }}>
         <Plus className="w-8 h-8" />
       </button>
 
+      {/* Modal (igual que el original, sin cambios) */}
       <AnimatePresence>
         {mostrarModal && (
           <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-slate-900/60 z-[60] max-w-md mx-auto backdrop-blur-sm"
-              onClick={() => setMostrarModal(false)}
-            />
-            <motion.div
-              initial={{ y: '100%' }}
-              animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 250 }}
-              className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[2.5rem] shadow-2xl z-[70] p-6 pb-8"
-            >
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-slate-900/60 z-[60] max-w-md mx-auto backdrop-blur-sm" onClick={() => setMostrarModal(false)} />
+            <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} transition={{ type: 'spring', damping: 25, stiffness: 250 }} className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[2.5rem] shadow-2xl z-[70] p-6 pb-8">
               <div className="flex justify-between items-center mb-4">
-                <h3 className="font-black text-xl text-slate-800">
-                  {modoEdicion ? '✏️ Editar Insumo' : '➕ Nuevo Insumo'}
-                </h3>
-                <button onClick={() => setMostrarModal(false)} className="bg-slate-100 p-2 rounded-full">
-                  <X className="w-5 h-5" />
-                </button>
+                <h3 className="font-black text-xl text-slate-800">{modoEdicion ? '✏️ Editar Insumo' : '➕ Nuevo Insumo'}</h3>
+                <button onClick={() => setMostrarModal(false)} className="bg-slate-100 p-2 rounded-full"><X className="w-5 h-5" /></button>
               </div>
               <form onSubmit={guardarInsumo} className="space-y-4">
-                <input
-                  type="text"
-                  placeholder="Nombre (ej: Harina Pan)"
-                  value={nombre}
-                  onChange={(e) => setNombre(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-emerald-500"
-                  required
-                />
+                <input type="text" placeholder="Nombre (ej: Harina Pan)" value={nombre} onChange={(e) => setNombre(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-emerald-500" required />
                 <div className="flex gap-3">
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="Cantidad"
-                    value={cantidad}
-                    onChange={(e) => setCantidad(e.target.value)}
-                    className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-emerald-500"
-                    required
-                  />
-                  <select
-                    value={unidad}
-                    onChange={(e) => setUnidad(e.target.value)}
-                    className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 outline-none focus:border-emerald-500 font-bold"
-                  >
+                  <input type="text" inputMode="decimal" placeholder="Cantidad" value={cantidad} onChange={(e) => setCantidad(e.target.value)} className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-emerald-500" required />
+                  <select value={unidad} onChange={(e) => setUnidad(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 outline-none focus:border-emerald-500 font-bold">
                     <option value="kg">kg</option>
                     <option value="g">g</option>
                     <option value="l">l</option>
@@ -428,71 +477,35 @@ export default function MiAlacena({ usuario, tasaBcv }) {
                     <option value="unidad">unidad</option>
                   </select>
                 </div>
-
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-400 uppercase ml-1">Costo total</label>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="relative">
                       <span className="absolute left-3 top-3 text-emerald-600 font-bold text-sm">$</span>
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="USD"
-                        value={costoTotalUsd}
-                        onChange={(e) => handleUsdChange(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-4 py-3 outline-none focus:border-emerald-500 font-bold"
-                        required
-                      />
+                      <input type="text" inputMode="decimal" placeholder="USD" value={costoTotalUsd} onChange={(e) => handleUsdChange(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-4 py-3 outline-none focus:border-emerald-500 font-bold" required />
                     </div>
                     <div className="relative">
                       <span className="absolute left-3 top-3 text-amber-600 font-bold text-sm">Bs</span>
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="Bolívares"
-                        value={costoTotalBs}
-                        onChange={(e) => handleBsChange(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-4 py-3 outline-none focus:border-amber-500 font-bold"
-                      />
+                      <input type="text" inputMode="decimal" placeholder="Bolívares" value={costoTotalBs} onChange={(e) => handleBsChange(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-4 py-3 outline-none focus:border-amber-500 font-bold" />
                     </div>
                   </div>
-                  <p className="text-[10px] text-slate-400 ml-1">
-                    Tasa actual: {tasaBcv?.toFixed(2) || '---'} Bs/$
-                  </p>
+                  <p className="text-[10px] text-slate-400 ml-1">Tasa actual: {tasaBcv?.toFixed(2) || '---'} Bs/$</p>
                 </div>
-
                 <div>
-                  <label className="text-xs font-bold text-slate-400 uppercase ml-1 flex items-center gap-1 mb-1">
-                    <ImageIcon className="w-4 h-4" /> Imagen del insumo
-                  </label>
+                  <label className="text-xs font-bold text-slate-400 uppercase ml-1 flex items-center gap-1 mb-1"><ImageIcon className="w-4 h-4" /> Imagen del insumo</label>
                   <div className="relative border-2 border-dashed border-slate-200 rounded-xl p-4 text-center hover:border-emerald-400 transition-colors">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleImagenChange}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                    />
+                    <input type="file" accept="image/*" onChange={handleImagenChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
                     {imagenPreview ? (
                       <div className="flex items-center gap-3">
                         <img src={imagenPreview} alt="vista previa" className="w-12 h-12 rounded-full object-cover border" />
-                        <span className="text-sm font-bold text-slate-600 truncate">
-                          {imagenArchivo ? imagenArchivo.name : 'Imagen actual'}
-                        </span>
+                        <span className="text-sm font-bold text-slate-600 truncate">{imagenArchivo ? imagenArchivo.name : 'Imagen actual'}</span>
                       </div>
                     ) : (
-                      <div className="text-slate-400">
-                        <UploadCloud className="w-8 h-8 mx-auto mb-1" />
-                        <p className="text-xs font-bold">Toca para subir imagen</p>
-                      </div>
+                      <div className="text-slate-400"><UploadCloud className="w-8 h-8 mx-auto mb-1" /><p className="text-xs font-bold">Toca para subir imagen</p></div>
                     )}
                   </div>
                 </div>
-
-                <button
-                  type="submit"
-                  disabled={guardando}
-                  className="w-full bg-emerald-500 text-white font-black py-4 rounded-xl active:scale-95 transition-all"
-                >
+                <button type="submit" disabled={guardando} className="w-full bg-emerald-500 text-white font-black py-4 rounded-xl active:scale-95 transition-all">
                   {guardando ? <Loader2 className="w-6 h-6 animate-spin mx-auto" /> : (modoEdicion ? 'ACTUALIZAR' : 'AGREGAR')}
                 </button>
               </form>

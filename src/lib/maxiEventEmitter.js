@@ -1,16 +1,11 @@
-
-
 import { registrarEvento } from '../store/maxiStore';
 
-/**
- * Los componentes pueden llamar a estas funciones para notificar eventos a Maxi.
- */
 export function notificarVenta(datosVenta) {
-  registrarEvento('venta', datosVenta);
+  registrarEvento('venta_realizada', datosVenta);
 }
 
 export function notificarCocina(datosReceta) {
-  registrarEvento('cocina', datosReceta);
+  registrarEvento('receta_guardada', datosReceta);
 }
 
 export function notificarStockBajo(insumo) {
@@ -19,4 +14,20 @@ export function notificarStockBajo(insumo) {
 
 export function notificarLogro(mensaje) {
   registrarEvento('logro', { mensaje });
+}
+
+export function notificarPrimeraVenta() {
+  registrarEvento('primera_venta_dia', {});
+}
+
+export function notificarRacha(dias) {
+  registrarEvento('racha_alcanzada', { dias });
+}
+
+export function notificarProductoEstrella(nombre) {
+  registrarEvento('producto_estrella', { nombre });
+}
+
+export function notificarFiadoCobrado(monto) {
+  registrarEvento('fiado_cobrado', { monto });
 }

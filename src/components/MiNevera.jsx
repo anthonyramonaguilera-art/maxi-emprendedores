@@ -1,26 +1,40 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { ShoppingBag, Plus, Minus, CheckCircle2, Loader2, X, Edit2, Trash2 } from 'lucide-react';
+import { ShoppingBag, Plus, Minus, CheckCircle2, Loader2, X, Edit2, Trash2, IceCream, ThermometerSnowflake, Store, Move, Package, CheckSquare, Square } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { addToast } from '../store/toastStore';
-import { incrementarRacha } from '../store/rachaStore'; // ✅ NUEVO
+import { incrementarRacha } from '../store/rachaStore';
 import { notificarVenta } from '../lib/maxiEventEmitter';
 
-export default function MiNevera({ usuario, tasaBcv }) {
+export default function MiNevera({ usuario, tasaBcv, playSound }) {
   const [productos, setProductos] = useState([]);
   const [carrito, setCarrito] = useState([]);
   const [cargando, setCargando] = useState(false);
   const [despachando, setDespachando] = useState(false);
   const [mostrarCheckout, setMostrarCheckout] = useState(false);
   const [exitoVisual, setExitoVisual] = useState(false);
+  const [categoriaActiva, setCategoriaActiva] = useState('general');
 
-  // --- Estado para Edición ---
+  // Estados para selección múltiple
+  const [modoSeleccionMultiple, setModoSeleccionMultiple] = useState(false);
+  const [seleccionados, setSeleccionados] = useState({}); // { id: cantidad }
+  const [mostrarPanelSeleccion, setMostrarPanelSeleccion] = useState(false);
+
+  // Mover categoría
+  const [mostrarMoverModal, setMostrarMoverModal] = useState(false);
+  const [productoAMover, setProductoAMover] = useState(null);
+  const [nuevaCategoria, setNuevaCategoria] = useState('');
+
+  // Edición
   const [mostrarEditarModal, setMostrarEditarModal] = useState(false);
   const [productoEditando, setProductoEditando] = useState(null);
   const [editNombre, setEditNombre] = useState('');
   const [editPrecioUsd, setEditPrecioUsd] = useState('');
   const [editPrecioBs, setEditPrecioBs] = useState('');
   const [editStock, setEditStock] = useState('');
+  const [editCategoria, setEditCategoria] = useState('');
+  const [editImagen, setEditImagen] = useState(null);
+  const [editImagenPreview, setEditImagenPreview] = useState('');
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
 
   useEffect(() => {
@@ -43,15 +57,53 @@ export default function MiNevera({ usuario, tasaBcv }) {
         .eq('user_id', currentUserId)
         .order('nombre', { ascending: true });
       if (error) throw error;
-      if (data) setProductos(data);
+      setProductos(data || []);
     } catch (error) {
       console.error("Error cargando la nevera:", error);
+      addToast("Error al cargar productos", 'error');
     } finally {
       setCargando(false);
     }
   };
 
-  // --- ABRIR MODAL DE EDICIÓN (cargar valores en ambos campos) ---
+  const getNombreCategoria = (cat) => {
+    switch(cat) {
+      case 'congelador': return 'Congelador';
+      case 'frio': return 'Frío';
+      case 'mostrador': return 'Mostrador';
+      default: return 'General';
+    }
+  };
+
+  const moverProductoCategoria = async (producto, nuevaCat) => {
+    try {
+      const { error } = await supabase
+        .from('productos')
+        .update({ categoria: nuevaCat === 'general' ? null : nuevaCat })
+        .eq('id', producto.id);
+      if (error) throw error;
+      addToast(`✅ ${producto.nombre} movido a ${getNombreCategoria(nuevaCat)}`, 'success');
+      await cargarNevera();
+      if (playSound) playSound('coin_drop');
+    } catch (err) {
+      addToast('Error al mover producto: ' + err.message, 'error');
+    }
+  };
+
+  const abrirMoverModal = (producto) => {
+    setProductoAMover(producto);
+    setNuevaCategoria(producto.categoria || 'general');
+    setMostrarMoverModal(true);
+  };
+
+  const confirmarMover = () => {
+    if (productoAMover && nuevaCategoria) {
+      moverProductoCategoria(productoAMover, nuevaCategoria);
+      setMostrarMoverModal(false);
+      setProductoAMover(null);
+    }
+  };
+
   const abrirEditar = (producto) => {
     setProductoEditando(producto);
     setEditNombre(producto.nombre);
@@ -60,10 +112,12 @@ export default function MiNevera({ usuario, tasaBcv }) {
     const tasa = tasaBcv || 1;
     setEditPrecioBs((parseFloat(usd.replace(',', '.')) * tasa).toFixed(2));
     setEditStock(producto.stock_actual.toString());
+    setEditCategoria(producto.categoria || 'general');
+    setEditImagenPreview(producto.imagen_url || '');
+    setEditImagen(null);
     setMostrarEditarModal(true);
   };
 
-  // --- MANEJADORES DE CONVERSIÓN USD <-> Bs ---
   const handleEditUsdChange = (value) => {
     const raw = value.replace(',', '.');
     setEditPrecioUsd(value);
@@ -92,7 +146,14 @@ export default function MiNevera({ usuario, tasaBcv }) {
     }
   };
 
-  // --- GUARDAR EDICIÓN ---
+  const handleEditImagenChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setEditImagen(file);
+      setEditImagenPreview(URL.createObjectURL(file));
+    }
+  };
+
   const guardarEdicion = async (e) => {
     e.preventDefault();
     if (!editNombre || !editPrecioUsd || !editStock) {
@@ -114,12 +175,26 @@ export default function MiNevera({ usuario, tasaBcv }) {
 
     setGuardandoEdicion(true);
     try {
+      let imagenFinalUrl = productoEditando.imagen_url;
+      if (editImagen) {
+        const fileExt = editImagen.name.split('.').pop();
+        const fileName = `${usuario.id}-${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+        const { error: uploadError } = await supabase.storage
+          .from('productos')
+          .upload(fileName, editImagen, { cacheControl: '3600', upsert: false });
+        if (uploadError) throw new Error("Error al subir imagen: " + uploadError.message);
+        const { data: publicUrlData } = supabase.storage.from('productos').getPublicUrl(fileName);
+        imagenFinalUrl = publicUrlData.publicUrl;
+      }
+
       const { error } = await supabase
         .from('productos')
         .update({
           nombre: editNombre.trim(),
           precio_venta_usd: precio,
           stock_actual: stock,
+          categoria: editCategoria === 'general' ? null : editCategoria,
+          imagen_url: imagenFinalUrl,
         })
         .eq('id', productoEditando.id);
 
@@ -135,7 +210,6 @@ export default function MiNevera({ usuario, tasaBcv }) {
     }
   };
 
-  // --- ELIMINAR PRODUCTO ---
   const eliminarProducto = async (id) => {
     if (!window.confirm('¿Eliminar este producto de la nevera?')) return;
     try {
@@ -148,7 +222,9 @@ export default function MiNevera({ usuario, tasaBcv }) {
     }
   };
 
+  // ---- Funciones para el carrito normal ----
   const tocarProducto = (producto) => {
+    if (modoSeleccionMultiple) return;
     if (producto.stock_actual <= 0) return;
     const existe = carrito.find(item => item.id === producto.id);
     if (existe) {
@@ -172,6 +248,66 @@ export default function MiNevera({ usuario, tasaBcv }) {
         return item;
       }).filter(Boolean)
     );
+  };
+
+  // ---- Funciones para selección múltiple ----
+  const toggleSeleccionProducto = (producto) => {
+    setSeleccionados(prev => {
+      const newState = { ...prev };
+      if (newState[producto.id]) {
+        delete newState[producto.id];
+      } else {
+        newState[producto.id] = 1;
+      }
+      return newState;
+    });
+    if (!mostrarPanelSeleccion && Object.keys(seleccionados).length === 0) {
+      setMostrarPanelSeleccion(true);
+    }
+  };
+
+  const actualizarCantidadSeleccion = (id, cantidad) => {
+    const cant = parseInt(cantidad) || 0;
+    if (cant <= 0) {
+      setSeleccionados(prev => {
+        const newState = { ...prev };
+        delete newState[id];
+        return newState;
+      });
+    } else {
+      setSeleccionados(prev => ({ ...prev, [id]: cant }));
+    }
+  };
+
+  const añadirSeleccionadosAlCarrito = () => {
+    const nuevosItems = [];
+    for (const [id, cantidad] of Object.entries(seleccionados)) {
+      const producto = productos.find(p => p.id === id);
+      if (producto && cantidad > 0 && cantidad <= producto.stock_actual) {
+        const existe = carrito.find(i => i.id === id);
+        if (existe) {
+          setCarrito(prev => prev.map(i => i.id === id ? { ...i, cantidadSeleccionada: i.cantidadSeleccionada + cantidad } : i));
+        } else {
+          nuevosItems.push({ ...producto, cantidadSeleccionada: cantidad });
+        }
+      } else if (producto && cantidad > producto.stock_actual) {
+        addToast(`Stock insuficiente de ${producto.nombre}. Disponible: ${producto.stock_actual}`, 'error');
+      }
+    }
+    if (nuevosItems.length > 0) {
+      setCarrito(prev => [...prev, ...nuevosItems]);
+    }
+    setSeleccionados({});
+    setModoSeleccionMultiple(false);
+    setMostrarPanelSeleccion(false);
+    setMostrarCheckout(true);
+    addToast(`${nuevosItems.length + (carrito.length > 0 ? ' productos añadidos al carrito' : ' productos seleccionados')}`, 'success');
+  };
+
+  const cancelarSeleccionMultiple = () => {
+    setSeleccionados({});
+    setModoSeleccionMultiple(false);
+    setMostrarPanelSeleccion(false);
   };
 
   const totalUsd = carrito.reduce((acc, item) => acc + (item.precio_venta_usd * item.cantidadSeleccionada), 0);
@@ -201,20 +337,29 @@ export default function MiNevera({ usuario, tasaBcv }) {
       await cargarNevera();
       setTimeout(() => setExitoVisual(false), 2000);
 
-      // ✅ Actualizar racha de ventas
       incrementarRacha('ventas');
       notificarVenta({ totalUsd });
+      if (playSound) playSound('cash_register');
+      addToast(`💰 Venta realizada: $${totalUsd.toFixed(2)}`, 'success');
     } catch (e) {
       addToast("Error al despachar: " + e.message, 'error');
+      if (playSound) playSound('alert');
     } finally {
       setDespachando(false);
     }
   };
 
+  // Filtrar productos según categoría activa
+  const productosFiltrados = productos.filter(p => {
+    const prodCat = p.categoria || 'general';
+    return prodCat === categoriaActiva;
+  });
+
   if (cargando) return <div className="flex justify-center items-center h-64"><Loader2 className="w-8 h-8 animate-spin text-blue-500" /></div>;
 
   return (
     <div className="space-y-4 font-sans pb-12">
+      {/* Header */}
       <div className="bg-gradient-to-r from-blue-500 to-indigo-600 rounded-3xl p-4 text-white shadow-md flex items-center gap-3 relative overflow-hidden">
         <div className="text-3xl animate-bounce">👦🏻</div>
         <div className="flex-1">
@@ -225,53 +370,83 @@ export default function MiNevera({ usuario, tasaBcv }) {
         </div>
       </div>
 
+      {/* Toggle selección múltiple y pestañas */}
+      <div className="flex flex-wrap justify-between items-center gap-2">
+        <div className="flex flex-wrap justify-center gap-1 bg-white p-2 rounded-2xl shadow-sm border border-slate-100 flex-1">
+          <button onClick={() => setCategoriaActiva('congelador')} className={`px-3 py-2 rounded-xl font-black text-sm flex items-center gap-1 transition-all ${categoriaActiva === 'congelador' ? 'bg-cyan-100 text-cyan-700' : 'text-slate-400 bg-slate-50'}`}>
+            <IceCream className="w-4 h-4" /> Congelador
+          </button>
+          <button onClick={() => setCategoriaActiva('frio')} className={`px-3 py-2 rounded-xl font-black text-sm flex items-center gap-1 transition-all ${categoriaActiva === 'frio' ? 'bg-blue-100 text-blue-700' : 'text-slate-400 bg-slate-50'}`}>
+            <ThermometerSnowflake className="w-4 h-4" /> Frío
+          </button>
+          <button onClick={() => setCategoriaActiva('mostrador')} className={`px-3 py-2 rounded-xl font-black text-sm flex items-center gap-1 transition-all ${categoriaActiva === 'mostrador' ? 'bg-amber-100 text-amber-700' : 'text-slate-400 bg-slate-50'}`}>
+            <Store className="w-4 h-4" /> Mostrador
+          </button>
+          <button onClick={() => setCategoriaActiva('general')} className={`px-3 py-2 rounded-xl font-black text-sm flex items-center gap-1 transition-all ${categoriaActiva === 'general' ? 'bg-gray-200 text-gray-700' : 'text-slate-400 bg-slate-50'}`}>
+            <Package className="w-4 h-4" /> General
+          </button>
+        </div>
+        <button
+          onClick={() => {
+            if (modoSeleccionMultiple) cancelarSeleccionMultiple();
+            else setModoSeleccionMultiple(true);
+          }}
+          className={`px-3 py-2 rounded-xl font-bold text-sm flex items-center gap-1 transition-all ${modoSeleccionMultiple ? 'bg-green-600 text-white' : 'bg-slate-200 text-slate-700'}`}
+        >
+          {modoSeleccionMultiple ? <X className="w-4 h-4" /> : <CheckSquare className="w-4 h-4" />}
+          {modoSeleccionMultiple ? 'Cancelar' : 'Múltiple'}
+        </button>
+      </div>
+
+      {/* Lista de productos */}
       <div className="bg-white border border-slate-200/80 rounded-3xl p-3 shadow-sm min-h-[400px] relative">
         <div className="w-full h-2 bg-slate-300 rounded-full mb-4 opacity-40" />
-        {productos.length === 0 ? (
-          <div className="text-center py-20 text-slate-400 italic text-sm">No tienes postres en exhibición.</div>
+        {productosFiltrados.length === 0 ? (
+          <div className="text-center py-20 text-slate-400 italic text-sm">No hay productos en esta categoría.</div>
         ) : (
           <div className="grid grid-cols-2 gap-3">
-            {productos.map((p) => {
+            {productosFiltrados.map((p) => {
               const agotado = p.stock_actual <= 0;
+              const seleccionado = modoSeleccionMultiple && seleccionados[p.id];
               return (
                 <div key={p.id} className="relative group">
-                  <button
-                    onClick={() => tocarProducto(p)}
-                    disabled={agotado}
-                    className={`bg-slate-50 p-3 rounded-2xl border text-left flex flex-col justify-between relative overflow-hidden active:scale-95 transition-all min-h-[140px] w-full ${agotado ? 'opacity-40 border-slate-200 grayscale' : 'border-slate-100 shadow-sm bg-white'}`}
+                  <div
+                    onClick={() => modoSeleccionMultiple ? toggleSeleccionProducto(p) : tocarProducto(p)}
+                    className={`bg-slate-50 p-3 rounded-2xl border flex flex-col justify-between relative overflow-hidden active:scale-95 transition-all min-h-[140px] w-full cursor-pointer ${agotado ? 'opacity-40 border-slate-200 grayscale' : 'border-slate-100 shadow-sm bg-white'} ${seleccionado ? 'ring-2 ring-green-500' : ''}`}
                   >
-                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full w-fit ${p.stock_actual <= 3 ? 'bg-red-100 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
+                    {modoSeleccionMultiple && (
+                      <div className="absolute top-2 left-2">
+                        {seleccionado ? <CheckSquare className="w-5 h-5 text-green-600" /> : <Square className="w-5 h-5 text-slate-400" />}
+                      </div>
+                    )}
+                    {p.imagen_url ? (
+                      <img src={p.imagen_url} alt={p.nombre} className="w-12 h-12 rounded-full object-cover mb-2 self-center" />
+                    ) : (
+                      <div className="w-12 h-12 rounded-full bg-slate-200 flex items-center justify-center mb-2 self-center text-slate-500 text-xs">Sin img</div>
+                    )}
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full w-fit mt-1 ${p.stock_actual <= 3 ? 'bg-red-100 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
                       {agotado ? 'Agotado' : `Disp: ${p.stock_actual}`}
                     </span>
-                    <h3 className="font-black text-slate-700 text-sm mt-3 leading-tight line-clamp-2">{p.nombre}</h3>
-                    <div className="mt-4 pt-2 border-t border-slate-100 w-full">
+                    <h3 className="font-black text-slate-700 text-sm mt-2 leading-tight line-clamp-2">{p.nombre}</h3>
+                    <div className="mt-2 pt-2 border-t border-slate-100 w-full">
                       <p className="text-base font-black text-emerald-600 leading-none">${p.precio_venta_usd.toFixed(2)}</p>
                       <p className="text-[10px] font-bold text-slate-400 mt-0.5 leading-none">{(p.precio_venta_usd * (tasaBcv || 1)).toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs</p>
                     </div>
-                  </button>
-
-                  <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        abrirEditar(p);
-                      }}
-                      className="p-1.5 bg-white border border-slate-200 rounded-lg text-blue-500 hover:bg-blue-50 active:scale-90 shadow-sm"
-                      title="Editar producto"
-                    >
-                      <Edit2 className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        eliminarProducto(p.id);
-                      }}
-                      className="p-1.5 bg-white border border-slate-200 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 active:scale-90 shadow-sm"
-                      title="Eliminar producto"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
                   </div>
+
+                  {!modoSeleccionMultiple && (
+                    <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={(e) => { e.stopPropagation(); abrirMoverModal(p); }} className="p-1.5 bg-white border border-slate-200 rounded-lg text-purple-500 hover:bg-purple-50 active:scale-90 shadow-sm" title="Mover categoría">
+                        <Move className="w-4 h-4" />
+                      </button>
+                      <button onClick={(e) => { e.stopPropagation(); abrirEditar(p); }} className="p-1.5 bg-white border border-slate-200 rounded-lg text-blue-500 hover:bg-blue-50 active:scale-90 shadow-sm" title="Editar">
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                      <button onClick={(e) => { e.stopPropagation(); eliminarProducto(p.id); }} className="p-1.5 bg-white border border-slate-200 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 active:scale-90 shadow-sm" title="Eliminar">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -279,100 +454,110 @@ export default function MiNevera({ usuario, tasaBcv }) {
         )}
       </div>
 
-      {/* MODAL DE EDICIÓN */}
+      {/* Panel flotante de selección múltiple */}
       <AnimatePresence>
-        {mostrarEditarModal && (
+        {modoSeleccionMultiple && mostrarPanelSeleccion && Object.keys(seleccionados).length > 0 && (
+          <motion.div initial={{ y: 100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 100, opacity: 0 }} className="fixed bottom-20 left-1/2 -translate-x-1/2 w-[90%] max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 p-4 z-50">
+            <h4 className="font-black text-slate-800 mb-2">Productos seleccionados</h4>
+            <div className="space-y-2 max-h-60 overflow-y-auto">
+              {Object.entries(seleccionados).map(([id, cant]) => {
+                const prod = productos.find(p => p.id === id);
+                if (!prod) return null;
+                return (
+                  <div key={id} className="flex justify-between items-center bg-slate-50 p-2 rounded-xl">
+                    <span className="font-bold text-sm truncate w-1/2">{prod.nombre}</span>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => actualizarCantidadSeleccion(id, cant - 1)} className="p-1 bg-white rounded-full shadow"><Minus className="w-4 h-4" /></button>
+                      <input type="number" value={cant} onChange={(e) => actualizarCantidadSeleccion(id, parseInt(e.target.value) || 0)} className="w-12 text-center border rounded-lg py-1" min="0" max={prod.stock_actual} />
+                      <button onClick={() => actualizarCantidadSeleccion(id, cant + 1)} className="p-1 bg-white rounded-full shadow"><Plus className="w-4 h-4" /></button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex gap-2 mt-3">
+              <button onClick={añadirSeleccionadosAlCarrito} className="flex-1 bg-green-600 text-white py-2 rounded-xl font-black">Añadir al carrito</button>
+              <button onClick={cancelarSeleccionMultiple} className="flex-1 bg-slate-200 text-slate-700 py-2 rounded-xl font-black">Cancelar</button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal para mover categoría */}
+      <AnimatePresence>
+        {mostrarMoverModal && productoAMover && (
           <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-slate-900/60 z-[60] max-w-md mx-auto backdrop-blur-sm"
-              onClick={() => setMostrarEditarModal(false)}
-            />
-            <motion.div
-              initial={{ y: '100%' }}
-              animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 250 }}
-              className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[2.5rem] shadow-2xl z-[70] p-6 pb-8"
-            >
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-slate-900/60 z-[60] max-w-md mx-auto backdrop-blur-sm" onClick={() => setMostrarMoverModal(false)} />
+            <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 250 }} className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[2.5rem] shadow-2xl z-[70] p-6 pb-8">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="font-black text-xl text-slate-800">Mover producto</h3>
+                <button onClick={() => setMostrarMoverModal(false)} className="bg-slate-100 p-2 rounded-full"><X className="w-5 h-5" /></button>
+              </div>
+              <p className="text-slate-600 mb-3">Mover "{productoAMover.nombre}" a:</p>
+              <select value={nuevaCategoria} onChange={(e) => setNuevaCategoria(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-purple-500 font-bold mb-4">
+                <option value="congelador">Congelador</option>
+                <option value="frio">Frío</option>
+                <option value="mostrador">Mostrador</option>
+                <option value="general">General</option>
+              </select>
+              <div className="flex gap-2">
+                <button onClick={confirmarMover} className="flex-1 bg-purple-600 text-white py-3 rounded-xl font-black">Mover</button>
+                <button onClick={() => setMostrarMoverModal(false)} className="flex-1 bg-slate-200 text-slate-700 py-3 rounded-xl font-black">Cancelar</button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Modal de edición */}
+      <AnimatePresence>
+        {mostrarEditarModal && productoEditando && (
+          <>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-slate-900/60 z-[60] max-w-md mx-auto backdrop-blur-sm" onClick={() => setMostrarEditarModal(false)} />
+            <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 250 }} className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[2.5rem] shadow-2xl z-[70] p-6 pb-8">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="font-black text-xl text-slate-800">✏️ Editar Producto</h3>
-                <button
-                  onClick={() => setMostrarEditarModal(false)}
-                  className="bg-slate-100 p-2 rounded-full text-slate-500 active:scale-90"
-                >
-                  <X className="w-5 h-5" />
-                </button>
+                <button onClick={() => setMostrarEditarModal(false)} className="bg-slate-100 p-2 rounded-full"><X className="w-5 h-5" /></button>
               </div>
-
               <form onSubmit={guardarEdicion} className="space-y-4">
                 <div>
                   <label className="text-xs font-bold text-slate-400 uppercase ml-1">Nombre</label>
-                  <input
-                    type="text"
-                    value={editNombre}
-                    onChange={(e) => setEditNombre(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-blue-500 font-bold"
-                    required
-                  />
+                  <input type="text" value={editNombre} onChange={(e) => setEditNombre(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-blue-500 font-bold" required />
                 </div>
-
-                {/* Doble moneda para precio de venta */}
+                <div>
+                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">Categoría</label>
+                  <select value={editCategoria} onChange={(e) => setEditCategoria(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-blue-500 font-bold">
+                    <option value="congelador">Congelador</option>
+                    <option value="frio">Frío</option>
+                    <option value="mostrador">Mostrador</option>
+                    <option value="general">General</option>
+                  </select>
+                </div>
                 <div>
                   <label className="text-xs font-bold text-slate-400 uppercase ml-1">Precio de venta</label>
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="relative">
-                      <span className="absolute left-3 top-3 text-emerald-600 font-bold text-sm">$</span>
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        value={editPrecioUsd}
-                        onChange={(e) => handleEditUsdChange(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-4 py-3 outline-none focus:border-blue-500 font-bold"
-                        required
-                      />
-                    </div>
-                    <div className="relative">
-                      <span className="absolute left-3 top-3 text-amber-600 font-bold text-sm">Bs</span>
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        value={editPrecioBs}
-                        onChange={(e) => handleEditBsChange(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-4 py-3 outline-none focus:border-blue-500 font-bold"
-                      />
-                    </div>
+                    <div className="relative"><span className="absolute left-3 top-3 text-emerald-600 font-bold text-sm">$</span><input type="text" inputMode="decimal" value={editPrecioUsd} onChange={(e) => handleEditUsdChange(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-4 py-3 outline-none focus:border-blue-500 font-bold" required /></div>
+                    <div className="relative"><span className="absolute left-3 top-3 text-amber-600 font-bold text-sm">Bs</span><input type="text" inputMode="decimal" value={editPrecioBs} onChange={(e) => handleEditBsChange(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-4 py-3 outline-none focus:border-blue-500 font-bold" /></div>
                   </div>
-                  <p className="text-[10px] text-slate-400 ml-1 mt-1">
-                    Tasa: {tasaBcv?.toFixed(2) || '---'} Bs/$
-                  </p>
+                  <p className="text-[10px] text-slate-400 ml-1 mt-1">Tasa: {tasaBcv?.toFixed(2) || '---'} Bs/$</p>
                 </div>
-
                 <div>
                   <label className="text-xs font-bold text-slate-400 uppercase ml-1">Stock actual</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={editStock}
-                    onChange={(e) => setEditStock(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-blue-500 font-bold"
-                    required
-                  />
+                  <input type="number" min="0" step="1" value={editStock} onChange={(e) => setEditStock(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-blue-500 font-bold" required />
                 </div>
-
-                <button
-                  type="submit"
-                  disabled={guardandoEdicion}
-                  className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-4 rounded-2xl active:scale-95 transition-all flex items-center justify-center"
-                >
-                  {guardandoEdicion ? (
-                    <Loader2 className="w-6 h-6 animate-spin" />
-                  ) : (
-                    'GUARDAR CAMBIOS'
-                  )}
+                <div>
+                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">Imagen</label>
+                  <div className="relative border-2 border-dashed border-slate-200 rounded-xl p-2 text-center">
+                    <input type="file" accept="image/*" onChange={handleEditImagenChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                    {editImagenPreview ? (
+                      <img src={editImagenPreview} alt="preview" className="w-16 h-16 rounded-full object-cover mx-auto" />
+                    ) : (
+                      <p className="text-xs text-slate-400">Toca para subir imagen</p>
+                    )}
+                  </div>
+                </div>
+                <button type="submit" disabled={guardandoEdicion} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-4 rounded-2xl active:scale-95 transition-all flex items-center justify-center">
+                  {guardandoEdicion ? <Loader2 className="w-6 h-6 animate-spin" /> : 'GUARDAR CAMBIOS'}
                 </button>
               </form>
             </motion.div>
@@ -380,7 +565,7 @@ export default function MiNevera({ usuario, tasaBcv }) {
         )}
       </AnimatePresence>
 
-      {/* CHECKOUT (SIN CAMBIOS) */}
+      {/* Checkout (modal de venta) */}
       <AnimatePresence>
         {exitoVisual && (
           <motion.div initial={{ opacity: 0, y: 50, scale: 0.9 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="fixed inset-x-4 top-1/3 mx-auto max-w-xs bg-emerald-500 text-white p-4 rounded-3xl shadow-2xl flex flex-col items-center text-center z-[80] border-4 border-white">
@@ -395,12 +580,9 @@ export default function MiNevera({ usuario, tasaBcv }) {
         {mostrarCheckout && carrito.length > 0 && (
           <>
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-slate-900/60 z-[60] max-w-md mx-auto backdrop-blur-sm" onClick={() => setMostrarCheckout(false)} />
-            <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 250 }} className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[2.5rem] shadow-[0_-10px_40px_rgba(0,0,0,0.2)] z-[70] p-6 pb-8 border-t border-slate-100 flex flex-col max-h-[85vh]">
+            <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 250 }} className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[2.5rem] shadow-2xl z-[70] p-6 pb-8 border-t border-slate-100 flex flex-col max-h-[85vh]">
               <div className="flex justify-between items-center mb-4 shrink-0">
-                <div className="flex items-center gap-2">
-                  <ShoppingBag className="text-blue-500 w-6 h-6" /> 
-                  <h3 className="font-black text-slate-800 text-xl">Tu Venta</h3>
-                </div>
+                <div className="flex items-center gap-2"><ShoppingBag className="text-blue-500 w-6 h-6" /><h3 className="font-black text-slate-800 text-xl">Tu Venta</h3></div>
                 <button onClick={() => setMostrarCheckout(false)} className="bg-slate-100 p-2 rounded-full text-slate-500 active:scale-90"><X className="w-5 h-5"/></button>
               </div>
               <div className="space-y-2 overflow-y-auto pr-1 mb-4 flex-1">
@@ -422,15 +604,8 @@ export default function MiNevera({ usuario, tasaBcv }) {
                 ))}
               </div>
               <div className="border-t border-dashed border-slate-200 pt-4 pb-4 flex justify-between items-center shrink-0">
-                <div>
-                  <p className="text-xs font-bold text-slate-400 uppercase">Total a Cobrar</p>
-                  <p className="text-3xl font-black text-emerald-600 leading-none mt-1">${totalUsd.toFixed(2)}</p>
-                </div>
-                <div className="text-right">
-                  <span className="bg-amber-100 text-amber-800 font-black text-sm px-3 py-1.5 rounded-xl shadow-sm block">
-                    {totalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs
-                  </span>
-                </div>
+                <div><p className="text-xs font-bold text-slate-400 uppercase">Total a Cobrar</p><p className="text-3xl font-black text-emerald-600 leading-none mt-1">${totalUsd.toFixed(2)}</p></div>
+                <div className="text-right"><span className="bg-amber-100 text-amber-800 font-black text-sm px-3 py-1.5 rounded-xl shadow-sm block">{totalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs</span></div>
               </div>
               <button onClick={finalizarDespacho} disabled={despachando} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black text-lg py-4 rounded-2xl shadow-lg shadow-blue-500/30 active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:bg-slate-300 shrink-0">
                 {despachando ? <Loader2 className="w-6 h-6 animate-spin" /> : <>💰 CONFIRMAR Y RECIBIR PAGO</>}
