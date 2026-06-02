@@ -4,6 +4,8 @@ import { Soup, CakeSlice, Plus, ArrowRight, ArrowLeft, Loader2, Trash2, Store, X
 import { motion, AnimatePresence } from 'framer-motion';
 import { addToast } from '../store/toastStore';
 import { incrementarRacha } from '../store/rachaStore';
+import { notificarCocina } from '../lib/maxiEventEmitter';
+
 
 export default function LaCocina({ usuario, tasaBcv }) {
   const [alacena, setAlacena] = useState([]);
@@ -172,6 +174,7 @@ export default function LaCocina({ usuario, tasaBcv }) {
       await cargarAlacena();
       
       incrementarRacha('cocina');
+      notificarCocina({ nombre: nombreProducto });
       addToast("¡Éxito! Postres guardados en Mi Nevera y materiales descontados de la Alacena.", 'success');
     } catch (error) {
       addToast("Error al guardar: " + error.message, 'error');

@@ -3,10 +3,12 @@ import { supabase } from '../lib/supabase';
 import { Archive, Soup, Store, LogOut, Coins, Loader2, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
+// --- CONEXIÓN AL CEREBRO GLOBAL ---
 import { useStore } from '@nanostores/react';
 import { tasaBcvStore, actualizarTasaBcv, origenTasaStore } from '../store/configStore';
 import { actualizarRachaAprendizaje } from '../store/rachaStore'; // ✅ NUEVO
 
+// Componentes
 import MiAlacena from './MiAlacena';
 import LaCocina from './LaCocina';
 import MiNevera from './MiNevera';
@@ -14,10 +16,12 @@ import MisCuentas from './MisCuentas';
 import ModuloConfiguracion from './ModuloConfiguracion';
 import ToastContainer from './ToastContainer';
 import RachaBar from './RachaBar'; // ✅ NUEVO
+import MaxiAssistant from './MaxiAssistant'; // ✅ NUEVO
 
 export default function DashboardApp({ usuario }) {
-  const [tabActiva, setTabActiva] = useState('nevera');
+  const [tabActiva, setTabActiva] = useState('nevera'); 
   const [perfil, setPerfil] = useState(null);
+  
   const [usuarioValidado, setUsuarioValidado] = useState(null);
   const [cargando, setCargando] = useState(true);
 
@@ -59,7 +63,7 @@ export default function DashboardApp({ usuario }) {
           .from('perfiles')
           .select('*')
           .eq('user_id', currentUser.id)
-          .maybeSingle();
+          .maybeSingle(); 
 
         if (data && montado) setPerfil(data);
       } catch (err) {
@@ -74,7 +78,7 @@ export default function DashboardApp({ usuario }) {
     inicializarApp();
 
     return () => { montado = false; };
-  }, [usuario]);
+  }, [usuario]); 
 
   const cerrarSesion = async () => {
     await supabase.auth.signOut();
@@ -93,6 +97,7 @@ export default function DashboardApp({ usuario }) {
   return (
     <div className="min-h-screen bg-slate-100 font-sans flex justify-center">
       <div className="w-full max-w-md bg-slate-50 min-h-screen flex flex-col shadow-2xl relative pb-24 overflow-x-hidden">
+        
         {/* HEADER SUPERIOR */}
         <header className="bg-white border-b border-slate-100 px-4 py-3 flex flex-col sticky top-0 z-40 shadow-sm">
           <div className="flex justify-between items-center">
@@ -123,9 +128,11 @@ export default function DashboardApp({ usuario }) {
                   {tasaBcvGlobal > 0 ? tasaBcvGlobal.toFixed(2) : '---'} Bs
                 </p>
               </div>
+              
               <button onClick={cerrarSesion} className="p-2 text-slate-400 hover:text-red-500 rounded-xl hover:bg-red-50 transition-colors" title="Salir">
                 <LogOut className="w-5 h-5" />
               </button>
+              
               <button 
                 onClick={() => setTabActiva('configuracion')} 
                 className={`p-2 rounded-full transition-transform active:scale-90 ${tabActiva === 'configuracion' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
@@ -171,6 +178,10 @@ export default function DashboardApp({ usuario }) {
           </button>
         </nav>
 
+        {/* ASISTENTE MAXI */}
+        <MaxiAssistant usuario={usuarioValidado} />
+
+        {/* CONTENEDOR DE TOASTS */}
         <ToastContainer />
       </div>
     </div>

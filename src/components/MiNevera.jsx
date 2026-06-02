@@ -4,6 +4,7 @@ import { ShoppingBag, Plus, Minus, CheckCircle2, Loader2, X, Edit2, Trash2 } fro
 import { motion, AnimatePresence } from 'framer-motion';
 import { addToast } from '../store/toastStore';
 import { incrementarRacha } from '../store/rachaStore'; // ✅ NUEVO
+import { notificarVenta } from '../lib/maxiEventEmitter';
 
 export default function MiNevera({ usuario, tasaBcv }) {
   const [productos, setProductos] = useState([]);
@@ -202,6 +203,7 @@ export default function MiNevera({ usuario, tasaBcv }) {
 
       // ✅ Actualizar racha de ventas
       incrementarRacha('ventas');
+      notificarVenta({ totalUsd });
     } catch (e) {
       addToast("Error al despachar: " + e.message, 'error');
     } finally {
