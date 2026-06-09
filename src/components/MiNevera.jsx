@@ -1,27 +1,20 @@
 import React, { useState } from 'react';
-import { ShoppingBag, Plus, Minus, CheckCircle2, Loader2, X, Edit2, Trash2, IceCream, ThermometerSnowflake, Store, Move, Package, CheckSquare, Square } from 'lucide-react';
+import { Plus, Minus, Edit2, Trash2, IceCream, ThermometerSnowflake, Store, Move, Package, CheckSquare, Square, Loader2, X, ShoppingBag } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import useNevera from '../hooks/useNevera';
+import { agregarProducto as agregarAlCarritoGlobal } from '../store/carritoStore';
+import { addToast } from '../store/toastStore';
 
 export default function MiNevera({ usuario, tasaBcv, playSound }) {
   const {
     cargando,
-    carrito,
-    despachando,
-    exitoVisual,
     modoSeleccionMultiple,
     setModoSeleccionMultiple,
     seleccionados,
-    totalUsd,
-    totalBs,
-    agregarAlCarrito,
-    modificarCantidadCarrito,
-    vaciarCarrito,
     toggleSeleccion,
     actualizarCantidadSeleccion,
     añadirSeleccionadosAlCarrito,
     cancelarSeleccionMultiple,
-    finalizarDespacho,
     guardarEdicionProducto,
     eliminarProducto,
     moverCategoria,
@@ -29,9 +22,6 @@ export default function MiNevera({ usuario, tasaBcv, playSound }) {
   } = useNevera(usuario?.id, tasaBcv, playSound);
 
   const [categoriaActiva, setCategoriaActiva] = useState('general');
-  const [mostrarCheckout, setMostrarCheckout] = useState(false);
-  const [mostrarPanelSeleccion, setMostrarPanelSeleccion] = useState(false);
-
   const [mostrarMoverModal, setMostrarMoverModal] = useState(false);
   const [productoAMover, setProductoAMover] = useState(null);
   const [nuevaCategoria, setNuevaCategoria] = useState('');
@@ -76,6 +66,16 @@ export default function MiNevera({ usuario, tasaBcv, playSound }) {
     setGuardandoEdicion(false);
   };
 
+  // Al tocar un producto normalmente, se agrega al carrito global directamente
+  const handleTocarProducto = (producto) => {
+    if (producto.stock_actual <= 0) {
+      addToast('Producto agotado', 'error');
+      return;
+    }
+    agregarAlCarritoGlobal(producto);
+    addToast(`${producto.nombre} añadido al carrito 🛒`, 'success');
+  };
+
   if (cargando) return <div className="flex justify-center items-center h-64"><Loader2 className="w-8 h-8 animate-spin text-blue-500" /></div>;
 
   return (
@@ -85,7 +85,7 @@ export default function MiNevera({ usuario, tasaBcv, playSound }) {
         <div className="flex-1">
           <p className="text-xs font-black uppercase tracking-widest text-blue-200">Maxi Despachador</p>
           <p className="text-sm font-bold leading-tight mt-0.5">
-            {productosFiltrados.length === 0 ? "¡La nevera está vacía! Ve a 'La Cocina' para preparar dulces." : "¡Mostrador listo! Toca la vitrina para armar el pedido."}
+            {productosFiltrados.length === 0 ? "¡La nevera está vacía! Ve a 'La Cocina' para preparar dulces." : "¡Toca un producto para añadirlo al carrito!"}
           </p>
         </div>
       </div>
@@ -135,7 +135,7 @@ export default function MiNevera({ usuario, tasaBcv, playSound }) {
               return (
                 <div key={p.id} className="relative group">
                   <div
-                    onClick={() => modoSeleccionMultiple ? toggleSeleccion(p) : agregarAlCarrito(p)}
+                    onClick={() => modoSeleccionMultiple ? toggleSeleccion(p) : handleTocarProducto(p)}
                     className={`bg-slate-50 p-3 rounded-2xl border flex flex-col justify-between relative overflow-hidden active:scale-95 transition-all min-h-[140px] w-full cursor-pointer ${agotado ? 'opacity-40 border-slate-200 grayscale' : 'border-slate-100 shadow-sm bg-white'} ${seleccionado ? 'ring-2 ring-green-500' : ''}`}
                   >
                     {modoSeleccionMultiple && (
@@ -249,55 +249,6 @@ export default function MiNevera({ usuario, tasaBcv, playSound }) {
                   {guardandoEdicion ? <Loader2 className="w-6 h-6 animate-spin" /> : 'GUARDAR CAMBIOS'}
                 </button>
               </form>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {exitoVisual && (
-          <motion.div initial={{ opacity: 0, y: 50, scale: 0.9 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="fixed inset-x-4 top-1/3 mx-auto max-w-xs bg-emerald-500 text-white p-4 rounded-3xl shadow-2xl flex flex-col items-center text-center z-[80] border-4 border-white">
-            <CheckCircle2 className="w-12 h-12 animate-pulse mb-1" />
-            <h4 className="font-black text-lg">¡Venta Despachada!</h4>
-            <p className="text-xs font-medium text-emerald-100">Dinero en caja y stock actualizado.</p>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {mostrarCheckout && carrito.length > 0 && (
-          <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-slate-900/60 z-[60] max-w-md mx-auto backdrop-blur-sm" onClick={() => setMostrarCheckout(false)} />
-            <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 250 }} className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[2.5rem] shadow-2xl z-[70] p-6 pb-8 border-t border-slate-100 flex flex-col max-h-[85vh]">
-              <div className="flex justify-between items-center mb-4 shrink-0">
-                <div className="flex items-center gap-2"><ShoppingBag className="text-blue-500 w-6 h-6" /><h3 className="font-black text-slate-800 text-xl">Tu Venta</h3></div>
-                <button onClick={() => setMostrarCheckout(false)} className="bg-slate-100 p-2 rounded-full text-slate-500 active:scale-90"><X className="w-5 h-5"/></button>
-              </div>
-              <div className="space-y-2 overflow-y-auto pr-1 mb-4 flex-1">
-                {carrito.map((item) => (
-                  <div key={item.id} className="bg-slate-50 p-3 rounded-2xl flex justify-between items-center border border-slate-100">
-                    <div className="flex-1 min-w-0 pr-2">
-                      <p className="font-bold text-slate-700 text-sm truncate">{item.nombre}</p>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-sm font-black text-emerald-600">${(item.precio_venta_usd * item.cantidadSeleccionada).toFixed(2)}</span>
-                        <span className="text-[10px] font-bold text-slate-400">{(item.precio_venta_usd * item.cantidadSeleccionada * (tasaBcv || 1)).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl p-1 shadow-sm shrink-0">
-                      <button onClick={() => modificarCantidadCarrito(item.id, -1)} className="p-1 text-slate-500 active:bg-slate-100 rounded-lg"><Minus className="w-4 h-4" /></button>
-                      <span className="font-black text-slate-800 text-sm px-1 w-4 text-center">{item.cantidadSeleccionada}</span>
-                      <button onClick={() => modificarCantidadCarrito(item.id, 1)} className="p-1 text-slate-500 active:bg-slate-100 rounded-lg"><Plus className="w-4 h-4" /></button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="border-t border-dashed border-slate-200 pt-4 pb-4 flex justify-between items-center shrink-0">
-                <div><p className="text-xs font-bold text-slate-400 uppercase">Total a Cobrar</p><p className="text-3xl font-black text-emerald-600 leading-none mt-1">${totalUsd.toFixed(2)}</p></div>
-                <div className="text-right"><span className="bg-amber-100 text-amber-800 font-black text-sm px-3 py-1.5 rounded-xl shadow-sm block">{totalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs</span></div>
-              </div>
-              <button onClick={finalizarDespacho} disabled={despachando} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black text-lg py-4 rounded-2xl shadow-lg shadow-blue-500/30 active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:bg-slate-300 shrink-0">
-                {despachando ? <Loader2 className="w-6 h-6 animate-spin" /> : <>💰 CONFIRMAR Y RECIBIR PAGO</>}
-              </button>
             </motion.div>
           </>
         )}

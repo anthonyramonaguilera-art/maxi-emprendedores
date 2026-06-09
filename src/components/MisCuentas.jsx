@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Wallet, BookOpen, Plus, CheckCircle2, Loader2, X, AlertCircle, BarChart3, Minus, Plus as PlusIcon, ShoppingCart, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import useFinanzas from '../hooks/useFinanzas';
+import { supabase } from '../lib/supabase';
+import { addToast } from '../store/toastStore';
 import {
   ResponsiveContainer,
   BarChart,
@@ -37,6 +39,9 @@ export default function MisCuentas({ usuario, tasaBcv, playSound }) {
   const [fechaVencimiento, setFechaVencimiento] = useState('');
   const [productosSeleccionados, setProductosSeleccionados] = useState([]);
   const [montoAdicionalManual, setMontoAdicionalManual] = useState('');
+
+  // Abonos parciales
+  const [abonoInput, setAbonoInput] = useState({});
 
   const agregarProductoFiado = (producto) => {
     const existe = productosSeleccionados.find(p => p.id === producto.id);
@@ -92,15 +97,44 @@ export default function MisCuentas({ usuario, tasaBcv, playSound }) {
     setGuardando(false);
   };
 
+  const handleAbonar = async (fiadoId, monto) => {
+    if (!monto || isNaN(monto) || monto <= 0) {
+      addToast('Ingresa un monto válido', 'error');
+      return;
+    }
+    const fiado = fiados.find(f => f.id === fiadoId);
+    const montoTotal = parseFloat(fiado.monto_total || fiado.monto_usd || 0);
+    const abonadoActual = parseFloat(fiado.monto_abonado) || 0;
+    const nuevoAbono = abonadoActual + monto;
+    if (nuevoAbono > montoTotal) {
+      addToast('El abono supera la deuda total', 'error');
+      return;
+    }
+    try {
+      const { error } = await supabase
+        .from('fiados')
+        .update({ monto_abonado: nuevoAbono, estado: nuevoAbono >= montoTotal ? 'Pagado' : 'Pendiente' })
+        .eq('id', fiadoId);
+      if (error) throw error;
+      addToast(`Abono de $${monto.toFixed(2)} registrado`, 'success');
+      setAbonoInput(prev => ({ ...prev, [fiadoId]: '' }));
+      if (playSound) playSound('coin_drop');
+      // Recargar datos
+      const { data } = await supabase.from('fiados').select('*').eq('user_id', usuario.id).order('created_at', { ascending: false });
+      // Necesitamos una forma de refrescar fiados... asumimos que useFinanzas tiene un recargar
+      window.location.reload(); // Solución rápida, mejor usar recargar del hook
+    } catch (err) {
+      addToast('Error al registrar abono: ' + err.message, 'error');
+    }
+  };
+
   const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
       return (
         <div className="bg-white border border-indigo-200 p-2 rounded-xl shadow-lg">
           <p className="text-xs font-bold text-slate-600">{label}</p>
           <p className="text-sm font-black text-indigo-600">${payload[0].value.toFixed(2)}</p>
-          <p className="text-[10px] font-bold text-slate-400">
-            {(payload[0].payload.totalBs).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs
-          </p>
+          <p className="text-[10px] font-bold text-slate-400">{(payload[0].payload.totalBs).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs</p>
         </div>
       );
     }
@@ -118,16 +152,10 @@ export default function MisCuentas({ usuario, tasaBcv, playSound }) {
   return (
     <div className="space-y-4 font-sans pb-24">
       <div className="bg-slate-200/50 p-1.5 rounded-2xl flex gap-1 shadow-inner">
-        <button
-          onClick={() => setPestaña('caja')}
-          className={`flex-1 py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${pestaña === 'caja' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
-        >
+        <button onClick={() => setPestaña('caja')} className={`flex-1 py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${pestaña === 'caja' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}>
           <Wallet className="w-5 h-5" /> Mi Caja
         </button>
-        <button
-          onClick={() => setPestaña('fiados')}
-          className={`flex-1 py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${pestaña === 'fiados' ? 'bg-white text-rose-600 shadow-sm' : 'text-slate-400'}`}
-        >
+        <button onClick={() => setPestaña('fiados')} className={`flex-1 py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${pestaña === 'fiados' ? 'bg-white text-rose-600 shadow-sm' : 'text-slate-400'}`}>
           <BookOpen className="w-5 h-5" /> Fiados
         </button>
       </div>
@@ -140,7 +168,6 @@ export default function MisCuentas({ usuario, tasaBcv, playSound }) {
             <h2 className="text-4xl font-black">${totalCajaUsd.toFixed(2)}</h2>
             <p className="text-indigo-200 font-bold mt-1">{totalCajaBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs</p>
           </div>
-
           <div className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
             <h3 className="font-black text-slate-800 mb-4 flex items-center gap-2"><BarChart3 className="w-5 h-5 text-indigo-500" /> Últimos 7 días</h3>
             {cargandoGrafico ? (
@@ -162,7 +189,6 @@ export default function MisCuentas({ usuario, tasaBcv, playSound }) {
               </div>
             )}
           </div>
-
           <div className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
             <h3 className="font-black text-slate-800 mb-4 flex items-center gap-2">🛒 Historial de Despachos</h3>
             {ventas.length === 0 ? (
@@ -223,9 +249,29 @@ export default function MisCuentas({ usuario, tasaBcv, playSound }) {
                       </div>
                     </div>
                     {f.estado === 'Pendiente' && (
-                      <button onClick={() => pagarFiado(f)} className="w-full bg-emerald-50 text-emerald-600 font-black text-sm py-2.5 rounded-xl border border-emerald-200 active:scale-95 transition-all flex justify-center items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4" /> LIQUIDAR DEUDA
-                      </button>
+                      <div className="flex items-center gap-2 mt-2">
+                        <input
+                          type="number"
+                          step="0.01"
+                          placeholder="Abono $"
+                          value={abonoInput[f.id] || ''}
+                          onChange={(e) => setAbonoInput(prev => ({ ...prev, [f.id]: e.target.value }))}
+                          className="w-24 bg-white border border-slate-200 rounded-lg px-2 py-1 text-sm"
+                        />
+                        <button
+                          onClick={() => handleAbonar(f.id, parseFloat(abonoInput[f.id]))}
+                          disabled={!abonoInput[f.id] || isNaN(parseFloat(abonoInput[f.id])) || parseFloat(abonoInput[f.id]) <= 0}
+                          className="bg-emerald-600 text-white font-bold text-sm px-3 py-1 rounded-lg active:scale-95 disabled:opacity-50"
+                        >
+                          Abonar
+                        </button>
+                        <button
+                          onClick={() => pagarFiado(f)}
+                          className="bg-rose-100 text-rose-700 font-bold text-sm px-3 py-1 rounded-lg active:scale-95"
+                        >
+                          Liquidar todo
+                        </button>
+                      </div>
                     )}
                   </div>
                 );

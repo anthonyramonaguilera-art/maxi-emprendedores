@@ -1,6 +1,6 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { supabase } from '../lib/supabase';
-import { Archive, Soup, Store, LogOut, Coins, Loader2, Settings, GraduationCap } from 'lucide-react';
+import { Archive, Soup, Store, LogOut, Coins, Loader2, Settings, GraduationCap, ShoppingCart } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@nanostores/react';
 import { tasaBcvStore, actualizarTasaBcv, origenTasaStore } from '../store/configStore';
@@ -11,12 +11,13 @@ import MaxiAvatar from './MaxiAvatar';
 import MaxiAssistant from './MaxiAssistant';
 import LogroDesbloqueadoModal from './LogroDesbloqueadoModal';
 import OnboardingWizard from './OnboardingWizard';
+import { carritoStore } from '../store/carritoStore';
 
-// Carga diferida de componentes pesados
 const MiAlacena = React.lazy(() => import('./MiAlacena'));
 const LaCocina = React.lazy(() => import('./LaCocina'));
 const MiNevera = React.lazy(() => import('./MiNevera'));
 const MisCuentas = React.lazy(() => import('./MisCuentas'));
+const Carrito = React.lazy(() => import('./Carrito'));
 const ModuloConfiguracion = React.lazy(() => import('./ModuloConfiguracion'));
 const Aprender = React.lazy(() => import('./Aprender'));
 const ToastContainer = React.lazy(() => import('./ToastContainer'));
@@ -36,10 +37,10 @@ export default function DashboardApp({ usuario }) {
   const tasaBcvGlobal = useStore(tasaBcvStore);
   const origenTasa = useStore(origenTasaStore);
   const { playSound } = useSound();
+  const carrito = useStore(carritoStore);
 
   useEffect(() => {
     let montado = true;
-
     const inicializarApp = async () => {
       try {
         if (tasaBcvStore.get() === 0) {
@@ -48,33 +49,27 @@ export default function DashboardApp({ usuario }) {
             .then(data => actualizarTasaBcv(data.promedio, 'oficial'))
             .catch(() => actualizarTasaBcv(51.20, 'manual'));
         }
-
         let currentUser = usuario;
         if (!currentUser || !currentUser.id) {
           const { data: { session }, error: sessionError } = await supabase.auth.getSession();
           if (sessionError) throw sessionError;
           if (session?.user) currentUser = session.user;
         }
-
         if (!currentUser || !currentUser.id) {
           window.location.href = '/login';
           return;
         }
-
         if (montado) {
           setUsuarioValidado(currentUser);
           actualizarRachaAprendizaje();
         }
-
         const { data, error: perfilError } = await supabase
           .from('perfiles')
           .select('*')
           .eq('user_id', currentUser.id)
           .maybeSingle();
-
         if (perfilError) throw perfilError;
         if (montado && data) setPerfil(data);
-
       } catch (err) {
         console.error('Error de inicialización:', err);
         if (montado) setError(err.message);
@@ -82,9 +77,7 @@ export default function DashboardApp({ usuario }) {
         if (montado) setCargando(false);
       }
     };
-
     inicializarApp();
-
     return () => { montado = false; };
   }, [usuario]);
 
@@ -202,6 +195,9 @@ export default function DashboardApp({ usuario }) {
                   {tabActiva === 'nevera' && <MiNevera usuario={usuarioValidado} tasaBcv={tasaBcvGlobal} playSound={playSound} />}
                 </ErrorBoundary>
                 <ErrorBoundary>
+                  {tabActiva === 'carrito' && <Carrito usuario={usuarioValidado} tasaBcv={tasaBcvGlobal} playSound={playSound} />}
+                </ErrorBoundary>
+                <ErrorBoundary>
                   {tabActiva === 'cuentas' && <MisCuentas usuario={usuarioValidado} tasaBcv={tasaBcvGlobal} playSound={playSound} />}
                 </ErrorBoundary>
                 <ErrorBoundary>
@@ -215,7 +211,6 @@ export default function DashboardApp({ usuario }) {
           </Suspense>
         </main>
 
-        {/* Barra de navegación inferior con Aprender */}
         <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md md:max-w-2xl lg:max-w-4xl bg-white border-t border-slate-100 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] px-2 py-2 flex justify-around items-center z-50 rounded-t-3xl">
           <button onClick={() => setTabActiva('alacena')} className={`flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all active:scale-90 ${tabActiva === 'alacena' ? 'bg-emerald-50 text-emerald-600 scale-105 font-black' : 'text-slate-400 font-medium'}`}>
             <Archive className="w-5 h-5" />
@@ -228,6 +223,15 @@ export default function DashboardApp({ usuario }) {
           <button onClick={() => setTabActiva('nevera')} className={`flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all active:scale-90 ${tabActiva === 'nevera' ? 'bg-blue-50 text-blue-600 scale-105 font-black' : 'text-slate-400 font-medium'}`}>
             <Store className="w-5 h-5" />
             <span className="text-[10px] mt-1 tracking-tight">Mi Nevera</span>
+          </button>
+          <button onClick={() => setTabActiva('carrito')} className={`relative flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all active:scale-90 ${tabActiva === 'carrito' ? 'bg-orange-50 text-orange-600 scale-105 font-black' : 'text-slate-400 font-medium'}`}>
+            <ShoppingCart className="w-5 h-5" />
+            <span className="text-[10px] mt-1 tracking-tight">Carrito</span>
+            {carrito.length > 0 && (
+              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center font-black">
+                {carrito.length}
+              </span>
+            )}
           </button>
           <button onClick={() => setTabActiva('cuentas')} className={`flex flex-col items-center justify-center py-2 px-3 rounded-2xl transition-all active:scale-90 ${tabActiva === 'cuentas' ? 'bg-indigo-50 text-indigo-600 scale-105 font-black' : 'text-slate-400 font-medium'}`}>
             <Coins className="w-5 h-5" />

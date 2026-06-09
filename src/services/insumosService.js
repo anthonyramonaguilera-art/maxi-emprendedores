@@ -65,3 +65,29 @@ export async function uploadInsumoImage(userId, file) {
   const { data } = supabase.storage.from('insumos').getPublicUrl(fileName);
   return data.publicUrl;
 }
+
+export async function toggleFavorito(id, valor) {
+  const { error } = await supabase.from('insumos').update({ es_favorito: valor }).eq('id', id);
+  if (error) throw error;
+}
+
+export async function toggleFijado(id, valor) {
+  const { error } = await supabase.from('insumos').update({ fijado: valor }).eq('id', id);
+  if (error) throw error;
+}
+
+export async function archivarConFecha(id) {
+  const { error } = await supabase.from('insumos').update({
+    archivado: true,
+    fecha_archivado: new Date().toISOString()
+  }).eq('id', id);
+  if (error) throw error;
+}
+
+export async function restaurarInsumo(id) {
+  const { error } = await supabase.from('insumos').update({
+    archivado: false,
+    fecha_archivado: null
+  }).eq('id', id);
+  if (error) throw error;
+}

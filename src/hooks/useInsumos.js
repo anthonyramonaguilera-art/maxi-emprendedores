@@ -115,6 +115,19 @@ export default function useInsumos(userId, playSound) {
     await updateInsumo(insumo.id, { archivado: false });
     addToast(`♻️ ${insumo.nombre} restaurado a la alacena`, 'success');
     await cargarInsumos();
+    const toggleFavorito = async (insumo) => {
+  const nuevoValor = !insumo.es_favorito;
+  await toggleFavorito(insumo.id, nuevoValor);
+  await cargarInsumos();
+  addToast(nuevoValor ? '⭐ Favorito' : 'Favorito quitado', 'info');
+};
+
+const toggleFijado = async (insumo) => {
+  const nuevoValor = !insumo.fijado;
+  await toggleFijado(insumo.id, nuevoValor);
+  await cargarInsumos();
+  addToast(nuevoValor ? '📌 Fijado' : 'Fijado quitado', 'info');
+};
   };
 
   return {
@@ -127,5 +140,14 @@ export default function useInsumos(userId, playSound) {
     archivarInsumo,
     restaurarInsumo,
     recargar: cargarInsumos,
-  };
+  
+  
+  
+  
+  }
+
+
+
+  
+  ;
 }
