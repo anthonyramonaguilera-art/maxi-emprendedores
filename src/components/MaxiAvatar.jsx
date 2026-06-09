@@ -6,6 +6,7 @@ import {
   limpiarEvento
 } from '../store/maxiStore';
 import { eventosMensajes, consejosDia } from '../lib/maxiData';
+import { accesorioEquipadoStore, ACCESORIOS_TIENDA } from '../store/recompensasStore';
 
 const accesoriosPorTab = {
   alacena: '🌾',
@@ -18,6 +19,7 @@ const accesoriosPorTab = {
 export default function MaxiAvatar({ activeTab = 'cocina' }) {
   const visible = useStore(maxiVisible);
   const ultimoEvento = useStore(maxiUltimoEvento);
+  const accesorioEquipado = useStore(accesorioEquipadoStore);
   const [mensaje, setMensaje] = useState({ texto: '', versiculo: '' });
   const [animacion, setAnimacion] = useState('');
   const [mostrarBurbuja, setMostrarBurbuja] = useState(false);
@@ -67,7 +69,15 @@ export default function MaxiAvatar({ activeTab = 'cocina' }) {
 
   if (!visible) return null;
 
-  const accesorio = accesoriosPorTab[activeTab] || '💼';
+  // Determinar qué accesorio mostrar
+  let accesorio = accesoriosPorTab[activeTab] || '💼';
+  if (accesorioEquipado) {
+    const accEquipado = ACCESORIOS_TIENDA.find(a => a.id === accesorioEquipado);
+    if (accEquipado) {
+      accesorio = accEquipado.icono;
+    }
+  }
+
   const [imgError, setImgError] = useState(false);
 
   return (

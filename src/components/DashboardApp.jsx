@@ -11,6 +11,7 @@ import MaxiAvatar from './MaxiAvatar';
 import MaxiAssistant from './MaxiAssistant';
 import LogroDesbloqueadoModal from './LogroDesbloqueadoModal';
 import OnboardingWizard from './OnboardingWizard';
+import DesafiosDiarios from './DesafiosDiarios';
 import { carritoStore } from '../store/carritoStore';
 
 const MiAlacena = React.lazy(() => import('./MiAlacena'));
@@ -182,6 +183,11 @@ export default function DashboardApp({ usuario }) {
         </header>
 
         <main className="flex-1 p-4 overflow-y-auto">
+          {/* Desafíos diarios */}
+          <div className="mb-4">
+            <DesafiosDiarios />
+          </div>
+
           <Suspense fallback={<div className="flex justify-center py-20"><Loader2 className="animate-spin w-8 h-8 text-blue-500"/></div>}>
             <AnimatePresence mode="wait">
               <motion.div key={tabActiva} initial={{ opacity: 0, x: 15 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -15 }} transition={{ duration: 0.15 }} className="h-full">

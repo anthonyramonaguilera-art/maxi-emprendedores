@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useStore } from '@nanostores/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { BookOpen, ArrowRight, CheckCircle2, XCircle, ShoppingBag, RotateCcw } from 'lucide-react';
@@ -7,7 +7,7 @@ import { xpStore, nivelStore, leccionesCompletadasStore, completarLeccion } from
 import { actualizarRachaAprendizaje } from '../store/rachaStore';
 import { puntosStore, ACCESORIOS_TIENDA, accesoriosCompradosStore, comprarAccesorio, equiparAccesorio, accesorioEquipadoStore, quitarAccesorio } from '../store/recompensasStore';
 
-// Definición de lecciones (mantengo las tuyas y añado nuevas)
+// Definición de lecciones
 const LECCIONES = [
   {
     key: 'costo_real',
@@ -108,7 +108,6 @@ const LECCIONES = [
     ],
     versiculoFinal: '“Anda, perezoso, mira a la hormiga, mira sus caminos, y sé sabio; la cual no teniendo capitán, ni gobernador, ni señor, prepara en el verano su comida.” (Proverbios 6:6-8)'
   },
-  // NUEVAS LECCIONES
   {
     key: 'deudas',
     titulo: '💳 Cómo manejar las deudas',
@@ -198,10 +197,18 @@ const LECCIONES = [
 export default function Aprender({ playSound }) {
   const [leccionActual, setLeccionActual] = useState(null);
   const [pasoActual, setPasoActual] = useState(0);
-  const [respuestas, setRespuestas] = useState([]); // { paso, respuesta, correcta }
+  const [respuestas, setRespuestas] = useState([]); 
   const [completada, setCompletada] = useState(false);
   const [mostrarResumen, setMostrarResumen] = useState(false);
   const [mostrarTienda, setMostrarTienda] = useState(false);
+
+  const [mostrarRetro, setMostrarRetro] = useState(false);
+  const [retroTexto, setRetroTexto] = useState('');
+  const [retroCorrecta, setRetroCorrecta] = useState(true);
+  const [opcionSeleccionada, setOpcionSeleccionada] = useState(null);
+
+  // Referencia para el temporizador, permite cancelarlo si el usuario avanza manual
+  const timerRef = useRef(null);
 
   const xp = useStore(xpStore);
   const nivel = useStore(nivelStore);
@@ -212,6 +219,10 @@ export default function Aprender({ playSound }) {
 
   useEffect(() => {
     actualizarRachaAprendizaje();
+    // Limpiar timer al desmontar
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
   }, []);
 
   const iniciarLeccion = (leccion) => {
@@ -220,51 +231,82 @@ export default function Aprender({ playSound }) {
     setRespuestas([]);
     setMostrarResumen(false);
     setCompletada(false);
+    setMostrarRetro(false);
+    setOpcionSeleccionada(null);
+    if (timerRef.current) clearTimeout(timerRef.current);
     if (playSound) playSound('pencil_write');
   };
 
-  const responder = (indice) => {
-    if (!leccionActual) return;
-    const paso = leccionActual.pasos[pasoActual];
-    const esCorrecta = indice === paso.correcta;
-    const nuevaRespuesta = { paso: pasoActual, respuesta: indice, correcta: esCorrecta };
-    const nuevasRespuestas = [...respuestas, nuevaRespuesta];
-    setRespuestas(nuevasRespuestas);
-    if (playSound) {
-      esCorrecta ? playSound('coin_drop') : playSound('alert');
-    }
+  const avanzarPaso = () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setMostrarRetro(false);
+    setOpcionSeleccionada(null);
+
     if (pasoActual + 1 < leccionActual.pasos.length) {
       setPasoActual(pasoActual + 1);
     } else {
-      // Terminó todas las preguntas, mostrar resumen
       setMostrarResumen(true);
     }
   };
 
+  const responder = (indice) => {
+    if (!leccionActual || mostrarRetro) return; 
+    
+    const paso = leccionActual.pasos[pasoActual];
+    const esCorrecta = indice === paso.correcta;
+    setOpcionSeleccionada(indice);
+
+    let textoFinal = paso.retro;
+    if (!esCorrecta) {
+      textoFinal = textoFinal.replace(/^¡Exacto! |^Correcto\. |^Muy bien\. |^¡Sí! /i, '');
+      textoFinal = 'Casi... ' + textoFinal;
+    }
+
+    setRetroTexto(textoFinal);
+    setRetroCorrecta(esCorrecta);
+    setMostrarRetro(true); 
+
+    if (playSound) {
+      esCorrecta ? playSound('coin_drop') : playSound('alert');
+    }
+
+    const nuevaRespuesta = { paso: pasoActual, respuesta: indice, correcta: esCorrecta };
+    setRespuestas([...respuestas, nuevaRespuesta]);
+
+    // Inicia el temporizador de 10s, pero se puede cancelar con el botón Siguiente
+    timerRef.current = setTimeout(() => {
+      avanzarPaso();
+    }, 10000); 
+  };
+
+  const finalizarLeccion = () => {
+    completarLeccion(leccionActual.key);
+    setMostrarResumen(false); // Soluciona el bug de la pantalla atascada
+    setCompletada(true);
+    if (playSound) playSound('celebration');
+  };
+
   const reintentarIncorrectas = () => {
     const incorrectas = respuestas.filter(r => !r.correcta);
-    if (incorrectas.length === 0) {
-      // Todas correctas, completar lección
-      completarLeccion(leccionActual.key);
-      setCompletada(true);
-      if (playSound) playSound('celebration');
-    } else {
-      // Regresar a la primera pregunta incorrecta
-      const primerPasoIncorrecto = incorrectas[0].paso;
-      setPasoActual(primerPasoIncorrecto);
-      setRespuestas(respuestas.filter(r => r.correcta)); // conservar solo correctas
-      setMostrarResumen(false);
-      if (playSound) playSound('pencil_write');
-    }
+    // Ir a la primera pregunta incorrecta
+    const primerPasoIncorrecto = incorrectas[0].paso;
+    setPasoActual(primerPasoIncorrecto);
+    setRespuestas(respuestas.filter(r => r.correcta)); 
+    setMostrarResumen(false);
+    setMostrarRetro(false);
+    setOpcionSeleccionada(null);
+    if (playSound) playSound('pencil_write');
   };
 
   const cerrarLeccion = () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
     setLeccionActual(null);
     setCompletada(false);
     setMostrarResumen(false);
+    setMostrarRetro(false);
+    setOpcionSeleccionada(null);
   };
 
-  // Vista de tienda
   const TiendaView = () => (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -294,10 +336,7 @@ export default function Aprender({ playSound }) {
                 <button
                   onClick={() => {
                     if (comprarAccesorio(acc.id)) {
-                      addToast(`¡Compraste ${acc.nombre}!`, 'success');
                       equiparAccesorio(acc.id);
-                    } else {
-                      addToast('No tienes suficientes MaxiCoins', 'error');
                     }
                   }}
                   disabled={puntos < acc.costo}
@@ -313,7 +352,6 @@ export default function Aprender({ playSound }) {
     </div>
   );
 
-  // Vista principal de lecciones
   if (!leccionActual && !mostrarTienda) {
     return (
       <div className="space-y-4 font-sans pb-24">
@@ -377,8 +415,33 @@ export default function Aprender({ playSound }) {
     );
   }
 
-  // Vista de lección activa
-  const paso = leccionActual.pasos[pasoActual];
+  // IMPORTANTE: Evaluamos completada PRIMERO para evitar que se atasque en mostrarResumen
+  if (completada) {
+    return (
+      <motion.div
+        key="completada"
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0 }}
+        className="text-center space-y-6 py-10"
+      >
+        <div className="text-6xl animate-bounce">{leccionActual.icono}</div>
+        <h2 className="text-3xl font-black text-slate-800">¡Lección completada!</h2>
+        <div className="bg-amber-100 inline-block px-4 py-2 rounded-full font-black text-amber-700">
+          +50 XP ✨ +50 🪙
+        </div>
+        <p className="text-slate-600 italic px-4">{leccionActual.versiculoFinal}</p>
+        <div className="flex justify-center gap-3">
+          <button
+            onClick={cerrarLeccion}
+            className="bg-slate-200 text-slate-700 font-bold py-3 px-6 rounded-2xl active:scale-95"
+          >
+            Volver a lecciones
+          </button>
+        </div>
+      </motion.div>
+    );
+  }
 
   if (mostrarResumen) {
     const total = leccionActual.pasos.length;
@@ -412,7 +475,7 @@ export default function Aprender({ playSound }) {
           <>
             <p className="text-slate-600 italic px-4">{leccionActual.versiculoFinal}</p>
             <button
-              onClick={reintentarIncorrectas}
+              onClick={finalizarLeccion}
               className="bg-emerald-500 text-white font-black py-3 px-6 rounded-2xl active:scale-95"
             >
               Completar lección (+50 XP +50 🪙)
@@ -429,32 +492,7 @@ export default function Aprender({ playSound }) {
     );
   }
 
-  if (completada) {
-    return (
-      <motion.div
-        key="completada"
-        initial={{ opacity: 0, scale: 0.9 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0 }}
-        className="text-center space-y-6 py-10"
-      >
-        <div className="text-6xl animate-bounce">{leccionActual.icono}</div>
-        <h2 className="text-3xl font-black text-slate-800">¡Lección completada!</h2>
-        <div className="bg-amber-100 inline-block px-4 py-2 rounded-full font-black text-amber-700">
-          +50 XP ✨ +50 🪙
-        </div>
-        <p className="text-slate-600 italic px-4">{leccionActual.versiculoFinal}</p>
-        <div className="flex justify-center gap-3">
-          <button
-            onClick={cerrarLeccion}
-            className="bg-slate-200 text-slate-700 font-bold py-3 px-6 rounded-2xl active:scale-95"
-          >
-            Volver a lecciones
-          </button>
-        </div>
-      </motion.div>
-    );
-  }
+  const paso = leccionActual.pasos[pasoActual];
 
   return (
     <motion.div
@@ -475,17 +513,56 @@ export default function Aprender({ playSound }) {
       <div className="bg-white rounded-3xl p-6 shadow-lg border border-slate-100">
         <h3 className="text-xl font-black text-slate-800 mb-4">{paso.pregunta}</h3>
         <div className="grid gap-3">
-          {paso.opciones.map((opcion, idx) => (
-            <motion.button
-              key={idx}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => responder(idx)}
-              className="w-full text-left p-4 rounded-2xl font-bold text-sm border-2 border-slate-200 bg-slate-50 text-slate-700 hover:border-purple-300 transition-all"
-            >
-              {opcion}
-            </motion.button>
-          ))}
+          {paso.opciones.map((opcion, idx) => {
+            let btnClass = 'border-slate-200 bg-slate-50 text-slate-700 hover:border-purple-300';
+            
+            if (mostrarRetro) {
+              if (idx === paso.correcta) {
+                btnClass = 'border-emerald-500 bg-emerald-50 text-emerald-700'; 
+              } else if (idx === opcionSeleccionada) {
+                btnClass = 'border-red-400 bg-red-50 text-red-600'; 
+              } else {
+                btnClass = 'border-slate-200 bg-slate-50 text-slate-400 opacity-50'; 
+              }
+            }
+
+            return (
+              <motion.button
+                key={idx}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => responder(idx)}
+                disabled={mostrarRetro} 
+                className={`w-full text-left p-4 rounded-2xl font-bold text-sm border-2 transition-all ${btnClass}`}
+              >
+                {opcion}
+              </motion.button>
+            );
+          })}
         </div>
+
+        <AnimatePresence>
+          {mostrarRetro && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="mt-5 space-y-4"
+            >
+              <div className={`p-4 rounded-xl flex items-start gap-3 shadow-inner ${retroCorrecta ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                {retroCorrecta ? <CheckCircle2 className="w-6 h-6 mt-0.5 flex-shrink-0" /> : <XCircle className="w-6 h-6 mt-0.5 flex-shrink-0 text-red-500" />}
+                <p className="text-sm font-medium leading-relaxed">{retroTexto}</p>
+              </div>
+              
+              <button
+                onClick={avanzarPaso}
+                className="w-full bg-slate-800 text-white font-bold py-3 rounded-2xl active:scale-95 transition-all flex items-center justify-center gap-2"
+              >
+                Siguiente <ArrowRight className="w-5 h-5" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
       </div>
     </motion.div>
   );
