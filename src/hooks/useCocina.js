@@ -109,6 +109,17 @@ export default function useCocina(userId, tasaBcv, playSound) {
     }
 
     try {
+      // Verificar límite de productos del plan gratuito
+      const { count: totalProductos } = await supabase
+        .from('productos')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId);
+      const limiteProductos = obtenerLimite('productos');
+      if (totalProductos >= limiteProductos) {
+        addToast(`Has alcanzado el límite de ${limiteProductos} productos del plan gratuito. Considera actualizar a Maxi Pro.`, 'error');
+        return false;
+      }
+
       for (const item of ingredientesOlla) {
         const cantUsada = parseFloat(item.cantidadUsada.toString().replace(',', '.')) || 0;
         const stockRestante = item.insumo.cantidad_actual - cantUsada;
@@ -126,22 +137,9 @@ export default function useCocina(userId, tasaBcv, playSound) {
       if (tipoPreparacion === 'congelador') {
         productoData.temp_congelado = tempCongelado || null;
         productoData.tiempo_congelado = tiempoCongelado || null;
-      
-      
         productoData.requiere_palito = requierePalito;
       }
-      const { count: totalProductos } = await supabase
-  .from('productos')
-  .select('*', { count: 'exact', head: true })
-  .eq('user_id', userId);
-const limiteProductos = obtenerLimite('productos');
-if (totalProductos >= limiteProductos) {
-  addToast(`Has alcanzado el límite de ${limiteProductos} productos del plan gratuito. Considera actualizar a Maxi Pro.`, 'error');
-  return false;
-}
 
-
-      
       await crearProducto(productoData);
 
       // Guardar receta si se marcó la opción

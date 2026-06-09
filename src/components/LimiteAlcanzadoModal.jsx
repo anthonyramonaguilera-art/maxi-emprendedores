@@ -37,7 +37,6 @@ export default function LimiteAlcanzadoModal({ tipo, visible, onClose }) {
             </p>
             <button
               onClick={() => {
-                // Aquí se integrará la pasarela de pago
                 alert('Próximamente: integración con pasarela de pago. ¡Gracias por tu interés!');
                 onClose();
               }}
